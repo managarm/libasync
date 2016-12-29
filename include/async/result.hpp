@@ -1,13 +1,19 @@
 #ifndef ASYNC_RESULT_HPP
 #define ASYNC_RESULT_HPP
 
+#include <assert.h>
 #include <atomic>
 #include <type_traits>
 #include <utility>
 
 #include <async/basic.hpp>
+#include <cofiber.hpp>
 
 namespace async {
+
+// ----------------------------------------------------------------------------
+// Basic result<T> class implementation.
+// ----------------------------------------------------------------------------
 
 namespace detail {
 	template<typename T>
@@ -18,15 +24,17 @@ namespace detail {
 		}
 
 		result_base()
-		: object(nullptr) { }
-
-		explicit result_base(awaitable<T> *obj)
-		: object(obj) { }
+		: object{nullptr} { }
+		
+		result_base(const result_base &) = delete;
 
 		result_base(result_base &&other)
 		: result_base() {
 			swap(*this, other);
 		}
+
+		explicit result_base(awaitable<T> *obj)
+		: object(obj) { }
 
 		~result_base() {
 			if(object)
@@ -53,8 +61,8 @@ public:
 	: detail::result_base<T>(obj) { }
 
 	void then(callback<void(T)> awaiter) {
-		object->then(awaiter);
-		object = nullptr;
+		assert(object);
+		std::exchange(object, nullptr)->then(awaiter);
 	}
 };
 
@@ -68,86 +76,14 @@ public:
 	: detail::result_base<void>(object) { }
 
 	void then(callback<void()> awaiter) {
-		object->then(awaiter);
-		object = nullptr;
+		assert(object);
+		std::exchange(object, nullptr)->then(awaiter);
 	}
 };
 
-template<typename T>
-struct promise {
-	struct state : awaitable<T> {
-	private:
-		enum : unsigned int {
-			has_value = 1,
-			has_awaiter = 2
-		};
-
-	public:
-		state()
-		: _flags(0) { }
-
-		void set_value(T value) {
-			new (&_value) T{std::move(value)};
-
-			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
-			assert(!(f & has_value));
-			if(f & has_awaiter && _awaiter) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				_awaiter(std::move(*vp));
-				vp->~T();
-				delete this;
-			}
-		}
-
-		void then(callback<void(T)> awaiter) override {
-			_awaiter = awaiter;
-
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(!(f & has_awaiter));
-			if(f & has_value) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				_awaiter(std::move(*vp));
-				vp->~T();
-				delete this;
-			}
-		}
-
-		void detach() override {
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(!(f & has_awaiter));
-			if(f & has_value) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				vp->~T();
-				delete this;
-			}
-		}
-
-	private:
-		std::atomic<unsigned int> _flags;
-		std::aligned_storage_t<sizeof(T), alignof(T)> _value;
-		callback<void(T)> _awaiter;
-	};
-
-	promise()
-	: _setter(new state), _getter(_setter) { }
-
-	void set_value(T value) {
-		assert(_setter);
-		_setter->set_value(std::move(value));
-		_setter = nullptr;
-	}
-
-	result<T> async_get() {
-		assert(_getter);
-		auto res = result<T>{_getter};
-		_getter = nullptr;
-		return res;
-	}
-
-private:
-	state *_setter;
-	state *_getter;
-};
+// ----------------------------------------------------------------------------
+// co_await support for result<T>.
+// ----------------------------------------------------------------------------
 
 namespace detail {
 	template<typename T>
@@ -219,7 +155,179 @@ async::detail::result_awaiter<T> cofiber_awaiter(async::result<T> res) {
 	return {std::move(res)};
 };
 
+// ----------------------------------------------------------------------------
+// promise<T> class implementation.
+// ----------------------------------------------------------------------------
+
+namespace detail {
+	enum : unsigned int {
+		has_value = 1,
+		has_awaiter = 2
+	};
+
+	template<typename T>
+	struct promise_state : awaitable<T> {
+	public:
+		promise_state()
+		: _flags(0) { }
+
+		void set_value(T value) {
+			new (&_value) T{std::move(value)};
+
+			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
+			assert(!(f & has_value));
+			if(f & has_awaiter && _awaiter) {
+				auto vp = reinterpret_cast<T *>(&_value);
+				if(_awaiter)
+					_awaiter(std::move(*vp));
+				vp->~T();
+				delete this;
+			}
+		}
+
+		void then(callback<void(T)> awaiter) override {
+			_awaiter = awaiter;
+
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value) {
+				auto vp = reinterpret_cast<T *>(&_value);
+				_awaiter(std::move(*vp));
+				vp->~T();
+				delete this;
+			}
+		}
+
+		void detach() override {
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value) {
+				auto vp = reinterpret_cast<T *>(&_value);
+				vp->~T();
+				delete this;
+			}
+		}
+
+	private:
+		std::atomic<unsigned int> _flags;
+		std::aligned_storage_t<sizeof(T), alignof(T)> _value;
+		callback<void(T)> _awaiter;
+	};
+	
+	template<>
+	struct promise_state<void> : awaitable<void> {
+		promise_state()
+		: _flags(0) { }
+
+		void set_value() {
+			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
+			assert(!(f & has_value));
+			if(f & has_awaiter) {
+				if(_awaiter)
+					_awaiter();
+				delete this;
+			}
+		}
+
+		void then(callback<void()> awaiter) override {
+			_awaiter = awaiter;
+
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value) {
+				_awaiter();
+				delete this;
+			}
+		}
+
+		void detach() override {
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value)
+				delete this;
+		}
+
+	private:
+		std::atomic<unsigned int> _flags;
+		callback<void()> _awaiter;
+	};
+
+	template<typename T>
+	struct promise_base {
+		friend void swap(promise_base &a, promise_base &b) {
+			using std::swap;
+			swap(a.setter, b.setter);
+			swap(a.getter, b.getter);
+		}
+
+		promise_base()
+		: setter(new promise_state<T>), getter(setter) { }
+
+		promise_base(const promise_base &) = delete;
+
+		promise_base(promise_base &&other)
+		: setter(nullptr), getter(nullptr) {
+			swap(*this, other);
+		}
+
+		~promise_base() {
+			assert(!setter && !getter);
+		}
+
+		promise_base &operator= (promise_base other) {
+			swap(*this, other);
+			return *this;
+		}
+
+	protected:
+		promise_state<T> *setter;
+		promise_state<T> *getter;
+	};
+}
+
+template<typename T>
+struct promise : private detail::promise_base<T> {
+private:
+	using detail::promise_base<T>::setter;
+	using detail::promise_base<T>::getter;
+
+public:
+	void set_value(T value) {
+		assert(setter);
+		std::exchange(setter, nullptr)->set_value(std::move(value));
+	}
+
+	result<T> async_get() {
+		assert(getter);
+		auto res = result<T>{std::exchange(getter, nullptr)};
+		return res;
+	}
+};
+
+template<>
+struct promise<void> : private detail::promise_base<void> {
+private:
+	using detail::promise_base<void>::setter;
+	using detail::promise_base<void>::getter;
+
+public:
+	void set_value() {
+		assert(setter);
+		std::exchange(setter, nullptr)->set_value();
+	}
+
+	result<void> async_get() {
+		assert(getter);
+		auto res = result<void>{std::exchange(getter, nullptr)};
+		return res;
+	}
+};
+
 } // namespace async
+
+// ----------------------------------------------------------------------------
+// Support for using result<T> as a coroutine return type.
+// ----------------------------------------------------------------------------
 
 namespace cofiber {
 	template<typename T>
