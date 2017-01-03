@@ -299,8 +299,7 @@ public:
 
 	result<T> async_get() {
 		assert(getter);
-		auto res = result<T>{std::exchange(getter, nullptr)};
-		return res;
+		return result<T>{std::exchange(getter, nullptr)};
 	}
 };
 
@@ -318,10 +317,129 @@ public:
 
 	result<void> async_get() {
 		assert(getter);
-		auto res = result<void>{std::exchange(getter, nullptr)};
-		return res;
+		return result<void>{std::exchange(getter, nullptr)};
 	}
 };
+
+// ----------------------------------------------------------------------------
+// pledge<T> class implementation.
+// ----------------------------------------------------------------------------
+
+namespace detail {
+	template<typename T>
+	struct pledge_base : awaitable<T> {
+		pledge_base()
+		: _retrieved(false) { }
+
+		pledge_base(const pledge_base &) = delete;
+
+		~pledge_base() {
+			assert(_retrieved);
+		}
+
+		pledge_base &operator= (const pledge_base &other) = delete;
+
+		result<T> async_get() {
+			assert(!std::exchange(_retrieved, true));
+			return result<T>{this};
+		}
+
+	protected:
+		bool _retrieved;
+	};
+
+	template<typename T>
+	struct pledge : private pledge_base<T> {
+		pledge()
+		: _flags(0) { }
+
+		void set_value(T value) {
+			new (&_value) T{std::move(value)};
+
+			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
+			assert(!(f & has_value));
+			if(f & has_awaiter && _awaiter) {
+				auto vp = reinterpret_cast<T *>(&_value);
+				if(_awaiter)
+					_awaiter(std::move(*vp));
+				vp->~T();
+				delete this;
+			}
+		}
+
+		using pledge_base<void>::async_get;
+
+	private:
+		void then(callback<void(T)> awaiter) override {
+			_awaiter = awaiter;
+
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value) {
+				auto vp = reinterpret_cast<T *>(&_value);
+				_awaiter(std::move(*vp));
+				vp->~T();
+				delete this;
+			}
+		}
+
+		void detach() override {
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value) {
+				auto vp = reinterpret_cast<T *>(&_value);
+				vp->~T();
+				delete this;
+			}
+		}
+
+		std::atomic<unsigned int> _flags;
+		std::aligned_storage_t<sizeof(T), alignof(T)> _value;
+		callback<void(T)> _awaiter;
+	};
+
+	template<>
+	struct pledge<void> : private pledge_base<void> {
+		pledge()
+		: _flags(0) { }
+
+		void set_value() {
+			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
+			assert(!(f & has_value));
+			if(f & has_awaiter) {
+				if(_awaiter)
+					_awaiter();
+				delete this;
+			}
+		}
+
+		using pledge_base<void>::async_get;
+
+	private:
+		void then(callback<void()> awaiter) override {
+			_awaiter = awaiter;
+
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value) {
+				_awaiter();
+				delete this;
+			}
+		}
+
+		void detach() override {
+			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+			assert(!(f & has_awaiter));
+			if(f & has_value)
+				delete this;
+		}
+
+		std::atomic<unsigned int> _flags;
+		callback<void()> _awaiter;
+	};
+}
+
+using detail::pledge;
 
 } // namespace async
 
