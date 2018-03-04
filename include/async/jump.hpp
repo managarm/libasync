@@ -29,6 +29,13 @@ struct jump : private awaitable<void> {
 		return result<void>{this};
 	}
 
+	void reset() {
+		// TODO: We do not need the lock for exclusion.
+		// Do we need it for the memory barrier?
+		std::lock_guard<std::mutex> lock(_mutex);
+		_done = false;
+	}
+
 private:
 	void then(callback<void()> awaiter) override {
 		{
