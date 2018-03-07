@@ -9,13 +9,24 @@ namespace async {
 namespace detail {
 	// Lock order: doorbell::_queue_mutex < node::_mutex
 	struct doorbell {
-		struct node : cancelable_awaitable<void>, boost::intrusive::list_base_hook<> {
+		struct node : smarter::counter, cancelable_awaitable<void>,
+				boost::intrusive::list_base_hook<> {
 			node(doorbell *owner)
-			: _owner{owner}, _fired{false} { }
+			: _owner{owner}, _fired{false} {
+				setup(smarter::adopt_rc, nullptr, 2);
+			}
 
 			node(const node &) = delete;
 
 			node &operator= (const node &) = delete;
+
+			void dispose() override {
+				assert(_fired); // This assumption is false if we use cancel().
+				// We inspect _cb without holding the lock.
+				// We someone changes it concurrently, the contract is broken anyway.
+				assert(!_cb);
+				delete this;
+			}
 
 			void pretrigger() {
 				std::lock_guard<std::mutex> lock(_mutex);
@@ -68,14 +79,6 @@ namespace detail {
 					cb();
 			}
 
-			void detach() override {
-				assert(_fired); // This assumption is false if we use cancel().
-				// We inspect _cb without holding the lock.
-				// We someone changes it concurrently, the contract is broken anyway.
-				assert(!_cb);
-				delete this;
-			}
-
 		private:
 			doorbell *_owner;
 
@@ -95,8 +98,13 @@ namespace detail {
 					ref.pretrigger();
 			}
 
-			for(auto &ref : items)
-				ref.trigger();
+			while(!items.empty()) {
+				auto item = &items.front();
+				items.pop_front();
+
+				item->trigger();
+				item->decrement();
+			}
 		}
 
 		cancelable_result<void> async_wait() {
@@ -105,7 +113,9 @@ namespace detail {
 				std::lock_guard<std::mutex> queue_lock(_queue_mutex);
 				_queue.push_back(*item);
 			}
-			return cancelable_result<void>{item};
+
+			smarter::shared_ptr<cancelable_awaitable<void>> ptr{smarter::adopt_rc, item, item};
+			return cancelable_result<void>{std::move(ptr)};
 		}
 
 	private:

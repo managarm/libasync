@@ -8,13 +8,21 @@ namespace async {
 
 namespace detail {
 	struct mutex {
-		struct node : awaitable<void> {
+		struct node : smarter::counter, awaitable<void> {
 			node()
-			: _flags(0) { }
+			: _flags(0) {
+				setup(smarter::adopt_rc, nullptr, 2);
+			}
 
 			node(const node &) = delete;
 
 			node &operator= (const node &) = delete;
+
+			void dispose() override {
+				auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
+				assert(f & has_value);
+				delete this;
+			}
 
 			void serve() {
 				auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
@@ -22,7 +30,6 @@ namespace detail {
 				if(f & has_awaiter) {
 					if(_awaiter)
 						_awaiter();
-					delete this;
 				}
 			}
 
@@ -33,15 +40,7 @@ namespace detail {
 				assert(!(f & has_awaiter));
 				if(f & has_value) {
 					_awaiter();
-					delete this;
 				}
-			}
-
-			void detach() override {
-				auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-				assert(!(f & has_awaiter));
-				if(f & has_value)
-					delete this;
 			}
 
 		private:
@@ -56,25 +55,31 @@ namespace detail {
 			auto item = new node;
 			{
 				std::lock_guard<std::mutex> lock(_mutex);
+
 				if(_locked) {
 					_waiters.push_back(item);
 				}else{
 					item->serve();
+					item->decrement();
 					_locked = true;
 				}
 			}
-			return result<void>{item};
+
+			smarter::shared_ptr<awaitable<void>> ptr{smarter::adopt_rc, item, item};
+			return result<void>{std::move(ptr)};
 		}
 
 		void unlock() {
 			std::lock_guard<std::mutex> lock(_mutex);
 			assert(_locked);
+
 			if(_waiters.empty()) {
 				_locked = false;
 			}else{
 				auto item = _waiters.front();
 				_waiters.pop_front();
 				item->serve();
+				item->decrement();
 			}
 		}
 

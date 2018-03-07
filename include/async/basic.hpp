@@ -44,14 +44,16 @@ private:
 
 template<typename T>
 struct awaitable {
+	virtual ~awaitable() { }
+
 	virtual void then(callback<void(T)> awaiter) = 0;
-	virtual void detach() = 0;
 };
 
 template<>
 struct awaitable<void> {
+	virtual ~awaitable() { }
+
 	virtual void then(callback<void()> cb) = 0;
-	virtual void detach() = 0;
 };
 
 template<typename T>

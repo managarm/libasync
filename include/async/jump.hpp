@@ -5,28 +5,32 @@
 #include <deque>
 
 #include <async/result.hpp>
+#include <async/doorbell.hpp>
 
 namespace async {
 
-struct jump : private awaitable<void> {
+struct jump {
 	jump()
 	: _done(false) { }
 
 	void trigger() {
-		std::deque<callback<void()>> queue;
 		{
 			std::lock_guard<std::mutex> lock(_mutex);
-			assert(!_done);
 			_done = true;
-			queue = std::move(_queue);
 		}
-
-		for(auto it = queue.begin(); it != queue.end(); ++it)
-			(*it)();
+		_bell.ring();
 	}
 
+	// TODO: This emulation is a bad idea from a performance point-of-view. Refactor it.
 	result<void> async_wait() {
-		return result<void>{this};
+		auto result = _bell.async_wait();
+		{
+			std::lock_guard<std::mutex> lock(_mutex);
+			if(!_done)
+				return std::move(result);
+		}
+		_bell.ring();
+		return std::move(result);
 	}
 
 	void reset() {
@@ -37,26 +41,9 @@ struct jump : private awaitable<void> {
 	}
 
 private:
-	void then(callback<void()> awaiter) override {
-		{
-			std::lock_guard<std::mutex> lock(_mutex);
-			if(!_done) {
-				_queue.push_back(awaiter);
-				return;
-			}
-		}
-
-		awaiter();
-	}
-
-	void detach() override {
-		// It makes so sense to call async_wait() if you do not await
-		// on the result. TODO: Throw an exception?
-	}
-
 	std::mutex _mutex;
 	bool _done;
-	std::deque<callback<void()>> _queue;
+	doorbell _bell;
 };
 
 } // namespace async
