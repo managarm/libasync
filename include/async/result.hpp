@@ -3,6 +3,8 @@
 
 #include <assert.h>
 #include <atomic>
+#include <experimental/optional>
+#include <iostream>
 #include <type_traits>
 #include <utility>
 
@@ -49,6 +51,40 @@ namespace detail {
 	protected:
 		awaitable<T> *object;
 	};
+	
+	template<typename T>
+	struct cancelable_result_base {
+		friend void swap(cancelable_result_base &a, cancelable_result_base &b) {
+			using std::swap;
+			swap(a.object, b.object);
+		}
+
+		cancelable_result_base()
+		: object{nullptr} { }
+		
+		cancelable_result_base(const cancelable_result_base &) = delete;
+
+		cancelable_result_base(cancelable_result_base &&other)
+		: cancelable_result_base() {
+			swap(*this, other);
+		}
+
+		explicit cancelable_result_base(cancelable_awaitable<T> *obj)
+		: object(obj) { }
+
+		~cancelable_result_base() {
+			if(object)
+				object->detach();
+		}
+
+		cancelable_result_base &operator= (cancelable_result_base other) {
+			swap(*this, other);
+			return *this;
+		}
+
+	protected:
+		cancelable_awaitable<T> *object;
+	};
 }
 
 template<typename T>
@@ -78,6 +114,58 @@ public:
 	void then(callback<void()> awaiter) {
 		assert(object);
 		std::exchange(object, nullptr)->then(awaiter);
+	}
+};
+
+template<typename T>
+struct cancelable_result : private detail::cancelable_result_base<T> {
+private:
+	using detail::cancelable_result_base<T>::object;
+
+public:
+	cancelable_result() = default;
+
+	explicit cancelable_result(cancelable_awaitable<T> *obj)
+	: detail::cancelable_result_base<T>(obj) { }
+	
+	operator result<T> () && {
+		return result<T>{std::exchange(object, nullptr)};
+	}
+
+	void then(callback<void(T)> awaiter) {
+		assert(object);
+		std::exchange(object, nullptr)->then(awaiter);
+	}
+
+	void cancel() {
+		assert(object);
+		object->cancel();
+	}
+};
+
+template<>
+struct cancelable_result<void> : private detail::cancelable_result_base<void> {
+private:
+	using detail::cancelable_result_base<void>::object;
+
+public:
+	cancelable_result() = default;
+
+	explicit cancelable_result(cancelable_awaitable<void> *object)
+	: detail::cancelable_result_base<void>(object) { }
+	
+	operator result<void> () && {
+		return result<void>{std::exchange(object, nullptr)};
+	}
+
+	void then(callback<void()> awaiter) {
+		assert(object);
+		std::exchange(object, nullptr)->then(awaiter);
+	}
+
+	void cancel() {
+		assert(object);
+		object->cancel();
 	}
 };
 
@@ -153,6 +241,11 @@ namespace detail {
 template<typename T>
 async::detail::result_awaiter<T> cofiber_awaiter(async::result<T> res) {
 	return {std::move(res)};
+};
+
+template<typename T>
+async::detail::result_awaiter<T> cofiber_awaiter(async::cancelable_result<T> res) {
+	return {async::result<T>{std::move(res)}};
 };
 
 // ----------------------------------------------------------------------------
@@ -447,16 +540,23 @@ using detail::pledge;
 // Support for using result<T> as a coroutine return type.
 // ----------------------------------------------------------------------------
 
+namespace async {
+	struct cancel_future_t { };
+
+	inline constexpr cancel_future_t cancel_future;
+}
+
 namespace cofiber {
 	template<typename T>
 	struct coroutine_traits<async::result<T>> {
 		struct promise_type {
+
 			async::result<T> get_return_object(coroutine_handle<> handle) {
 				return _promise.async_get();
 			}
 
 			auto initial_suspend() { return suspend_never(); }
-			auto final_suspend() { return suspend_never(); }
+			auto final_suspend() { return suspend_always(); }
 
 			template<typename... V>
 			void return_value(V &&... value) {
@@ -465,6 +565,314 @@ namespace cofiber {
 
 		private:
 			async::promise<T> _promise;
+		};
+	};
+	
+	template<typename T>
+	struct coroutine_traits<async::cancelable_result<T>> {
+		struct promise_type : async::cancelable_awaitable<T> {
+		private:
+			struct cancel_state_base {
+				cancel_state_base()
+				: ready{false}, cancelled{false}, waiting{false} { }
+
+				bool ready;
+				bool cancelled;
+				bool waiting;
+				cofiber::coroutine_handle<> handle;
+			};
+
+			template<typename X>
+			struct cancel_state : cancel_state_base {
+				std::experimental::optional<X> result;
+			};
+
+		public:
+			template<typename X>
+			struct cancellation {
+				struct awaiter {
+					awaiter(cancel_state<X> *st)
+					: _st{st}, _fastpath{false} { }
+
+					bool await_ready() {
+						_fastpath = _st->ready;
+						return _fastpath;
+					}
+
+					void await_suspend(cofiber::coroutine_handle<> handle) {
+						assert(!_fastpath);
+						assert(!_st->waiting);
+						_st->waiting = true;
+						_st->handle = handle;
+					}
+
+					X await_resume() {
+						if(!_fastpath) {
+							assert(_st->waiting);
+							_st->waiting = false;
+						}
+
+						return std::move(_st->result.value());
+					}
+
+				private:
+					cancel_state<X> *_st;
+					bool _fastpath;
+				};
+
+				friend auto cofiber_awaiter(cancellation &cnl) {
+					return awaiter{cnl._st};
+				}
+
+				cancellation(cancel_state<X> *st)
+				: _st{st} { }
+
+				bool cancelled() {
+					return _st->cancelled;
+				}
+
+			private:
+				cancel_state<X> *_st;
+			};
+
+			template<typename X>
+			struct yield_awaiter {
+				yield_awaiter(promise_type *p, async::result<X> result)
+				: _p{p} {
+					_st = new cancel_state<X>;
+
+					result.then([st = _st] (X result) {
+						st->result = std::move(result);
+						st->ready = true;
+						if(st->waiting)
+							st->handle.resume();
+					});
+				}
+
+				bool await_ready() {
+					return false;
+				}
+
+				void await_suspend(cofiber::coroutine_handle<> handle) {
+					assert(!_p->_yield_state);
+					_p->_yield_state = _st;
+
+					assert(!_st->waiting);
+					_st->waiting = true;
+					_st->handle = handle;
+				}
+
+				cancellation<X> await_resume() {
+					assert(_p->_yield_state == _st);
+					_p->_yield_state = nullptr;
+
+					assert(_st->waiting);
+					_st->waiting = false;
+
+					return cancellation<X>{_st};
+				}
+			
+			private:
+				promise_type *_p;
+				cancel_state<X> *_st;
+			};
+
+			promise_type()
+			: _future{_promise.async_get()}, _yield_state{nullptr} { }
+
+			async::cancelable_result<T> get_return_object(coroutine_handle<> handle) {
+				return async::cancelable_result<T>{this};
+			}
+
+			// TODO: We need to suspend_always on final suspend to get the lifetime
+			// of cancel() correct!
+			auto initial_suspend() { return suspend_never(); }
+			auto final_suspend() { return suspend_always(); }
+
+			template<typename... V>
+			void return_value(V &&... value) {
+				_promise.set_value(std::forward<V>(value)...);
+			}
+
+			template<typename X>
+			yield_awaiter<X> yield_value(async::result<X> result) {
+				return yield_awaiter<X>{this, std::move(result)};
+			}
+
+			void then(async::callback<void(T)> awaiter) override {
+				_future.then(awaiter);
+			}
+
+			void detach() override {
+			}
+
+			void cancel() override {
+				if(_yield_state) {
+					_yield_state->cancelled = true;
+					if(_yield_state->waiting)
+						_yield_state->handle.resume();
+				}
+			}
+
+		private:
+			// TODO: Do not use promise here!
+			async::promise<T> _promise;
+			async::result<T> _future;
+			cancel_state_base *_yield_state;
+		};
+	};
+	
+	template<>
+	struct coroutine_traits<async::cancelable_result<void>> {
+		struct promise_type : async::cancelable_awaitable<void> {
+		private:
+			struct cancel_state_base {
+				cancel_state_base()
+				: ready{false}, cancelled{false}, waiting{false} { }
+
+				bool ready;
+				bool cancelled;
+				bool waiting;
+				cofiber::coroutine_handle<> handle;
+			};
+
+			template<typename X>
+			struct cancel_state : cancel_state_base {
+				std::experimental::optional<X> result;
+			};
+
+		public:
+			template<typename X>
+			struct cancellation {
+				struct awaiter {
+					awaiter(cancel_state<X> *st)
+					: _st{st}, _fastpath{false} { }
+
+					bool await_ready() {
+						_fastpath = _st->ready;
+						return _fastpath;
+					}
+
+					void await_suspend(cofiber::coroutine_handle<> handle) {
+						assert(!_fastpath);
+						assert(!_st->waiting);
+						_st->waiting = true;
+						_st->handle = handle;
+					}
+
+					X await_resume() {
+						if(!_fastpath) {
+							assert(_st->waiting);
+							_st->waiting = false;
+						}
+
+						return std::move(_st->result.value());
+					}
+
+				private:
+					cancel_state<X> *_st;
+					bool _fastpath;
+				};
+
+				friend auto cofiber_awaiter(cancellation &cnl) {
+					return awaiter{cnl._st};
+				}
+
+				cancellation(cancel_state<X> *st)
+				: _st{st} { }
+
+				bool cancelled() {
+					return _st->cancelled;
+				}
+
+			private:
+				cancel_state<X> *_st;
+			};
+
+			template<typename X>
+			struct yield_awaiter {
+				yield_awaiter(promise_type *p, async::result<X> result)
+				: _p{p} {
+					_st = new cancel_state<X>;
+
+					result.then([st = _st] (X result) {
+						st->result = std::move(result);
+						st->ready = true;
+						if(st->waiting)
+							st->handle.resume();
+					});
+				}
+
+				bool await_ready() {
+					return false;
+				}
+
+				void await_suspend(cofiber::coroutine_handle<> handle) {
+					assert(!_p->_yield_state);
+					_p->_yield_state = _st;
+
+					assert(!_st->waiting);
+					_st->waiting = true;
+					_st->handle = handle;
+				}
+
+				cancellation<X> await_resume() {
+					assert(_p->_yield_state == _st);
+					_p->_yield_state = nullptr;
+
+					assert(_st->waiting);
+					_st->waiting = false;
+
+					return cancellation<X>{_st};
+				}
+			
+			private:
+				promise_type *_p;
+				cancel_state<X> *_st;
+			};
+
+			promise_type()
+			: _future{_promise.async_get()}, _yield_state{nullptr} { }
+
+			async::cancelable_result<void> get_return_object(coroutine_handle<> handle) {
+				return async::cancelable_result<void>{this};
+			}
+
+			// TODO: We need to suspend_always on final suspend to get the lifetime
+			// of cancel() correct!
+			auto initial_suspend() { return suspend_never(); }
+			auto final_suspend() { return suspend_always(); }
+
+			template<typename... V>
+			void return_value(V &&... value) {
+				_promise.set_value(std::forward<V>(value)...);
+			}
+
+			template<typename X>
+			yield_awaiter<X> yield_value(async::result<X> result) {
+				return yield_awaiter<X>{this, std::move(result)};
+			}
+
+			void then(async::callback<void()> awaiter) override {
+				_future.then(awaiter);
+			}
+
+			void detach() override {
+			}
+
+			void cancel() override {
+				if(_yield_state) {
+					_yield_state->cancelled = true;
+					if(_yield_state->waiting)
+						_yield_state->handle.resume();
+				}
+			}
+
+		private:
+			// TODO: Do not use promise here!
+			async::promise<void> _promise;
+			async::result<void> _future;
+			cancel_state_base *_yield_state;
 		};
 	};
 }

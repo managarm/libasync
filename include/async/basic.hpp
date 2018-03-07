@@ -54,6 +54,11 @@ struct awaitable<void> {
 	virtual void detach() = 0;
 };
 
+template<typename T>
+struct cancelable_awaitable : awaitable<T> {
+	virtual void cancel() = 0;
+};
+
 } // namespace async
 
 #endif // LIBASYNC_BASIC_HPP
