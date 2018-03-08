@@ -201,7 +201,7 @@ namespace detail {
 		result_awaiter &operator= (const result_awaiter &) = delete;
 
 		bool await_ready() {
-			return false;
+			return _res.ready();
 		}
 
 		template<typename H>
@@ -432,22 +432,55 @@ namespace async {
 namespace cofiber {
 	template<typename T>
 	struct coroutine_traits<async::result<T>> {
-		struct promise_type {
-
-			async::result<T> get_return_object(coroutine_handle<> handle) {
-				return _promise.async_get();
-			}
-
-			auto initial_suspend() { return suspend_never(); }
-			auto final_suspend() { return suspend_always(); }
-
-			template<typename... V>
-			void return_value(V &&... value) {
-				_promise.set_value(std::forward<V>(value)...);
+		struct promise_type : private smarter::counter, private async::awaitable<T> {
+			promise_type() {
+				setup(smarter::adopt_rc, nullptr, 2);
 			}
 
 		private:
-			async::promise<T> _promise;
+			void dispose() override {
+				auto handle = coroutine_handle<promise_type>::from_promise(*this);
+				handle.destroy();
+			}
+
+		public:
+			async::result<T> get_return_object(coroutine_handle<>) {
+				smarter::shared_ptr<async::awaitable<T>> ptr{smarter::adopt_rc, this, this};
+				return async::result<T>{std::move(ptr)};
+			}
+
+			auto initial_suspend() { return suspend_never(); }
+			auto final_suspend() {
+				struct awaiter {
+					awaiter(promise_type *p)
+					: _p{p} { }
+
+					bool await_ready() {
+						return false;
+					}
+
+					void await_suspend(cofiber::coroutine_handle<>) {
+						_p->decrement();
+					}
+
+					void await_resume() {
+						std::cerr << "libasync: Internal fatal error:"
+								" Coroutine resumed from final suspension point." << std::endl;
+						std::terminate();
+					}
+
+				private:
+					promise_type *_p;
+				};
+
+				return awaiter{this};
+			}
+
+			template<typename... V>
+			void return_value(V &&... value) {
+				async::awaitable<T>::emplace_value(std::forward<V>(value)...);
+				async::awaitable<T>::set_ready();
+			}
 		};
 	};
 	

@@ -111,6 +111,9 @@ private:
 template<>
 struct awaitable<void> : awaitable_base {
 	virtual ~awaitable() { }
+	
+protected:
+	void emplace_value() { }
 };
 
 template<typename T>
