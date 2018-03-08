@@ -9,8 +9,9 @@ namespace async {
 namespace detail {
 	struct mutex {
 		struct node : smarter::counter, awaitable<void> {
-			node()
-			: _flags(0) {
+			using awaitable<void>::set_ready;
+
+			node() {
 				setup(smarter::adopt_rc, nullptr, 2);
 			}
 
@@ -19,33 +20,9 @@ namespace detail {
 			node &operator= (const node &) = delete;
 
 			void dispose() override {
-				auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-				assert(f & has_value);
+				assert(ready());
 				delete this;
 			}
-
-			void serve() {
-				auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
-				assert(!(f & has_value));
-				if(f & has_awaiter) {
-					if(_awaiter)
-						_awaiter();
-				}
-			}
-
-			void then(callback<void()> awaiter) override {
-				_awaiter = awaiter;
-
-				auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-				assert(!(f & has_awaiter));
-				if(f & has_value) {
-					_awaiter();
-				}
-			}
-
-		private:
-			std::atomic<int> _flags;
-			callback<void()> _awaiter;
 		};
 
 		mutex()
@@ -59,7 +36,7 @@ namespace detail {
 				if(_locked) {
 					_waiters.push_back(item);
 				}else{
-					item->serve();
+					item->set_ready();
 					item->decrement();
 					_locked = true;
 				}
@@ -78,7 +55,7 @@ namespace detail {
 			}else{
 				auto item = _waiters.front();
 				_waiters.pop_front();
-				item->serve();
+				item->set_ready();
 				item->decrement();
 			}
 		}

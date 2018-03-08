@@ -1,6 +1,9 @@
 #ifndef LIBASYNC_BASIC_HPP
 #define LIBASYNC_BASIC_HPP
 
+#include <mutex>
+#include <optional>
+
 namespace async {
 
 template<typename S>
@@ -42,18 +45,72 @@ private:
 	std::aligned_storage_t<sizeof(void *), alignof(void *)> _object;
 };
 
+struct awaitable_base {
+	awaitable_base()
+	: _ready{false} { }
+
+	bool ready() {
+		std::lock_guard lock{_mutex};
+		return _ready;
+	}
+
+	void then(callback<void()> cb) {
+		assert(cb);
+		{
+			std::lock_guard lock{_mutex};
+			assert(!_cb);
+
+			if(!_ready)
+				_cb = std::exchange(cb, callback<void()>{});
+		}
+
+		if(cb)
+			cb();
+	}
+
+protected:
+	void set_ready() {
+		callback<void()> cb;
+		{
+			std::lock_guard lock{_mutex};
+			assert(!_ready);
+
+			_ready = true;
+			cb = std::exchange(_cb, callback<void()>{});
+		}
+
+		if(cb)
+			cb();
+	}
+
+private:
+	// TODO: Use light-weight atomics instead of a mutex.
+	std::mutex _mutex;
+	bool _ready;
+	callback<void()> _cb;
+};
+
 template<typename T>
-struct awaitable {
+struct awaitable : awaitable_base {
 	virtual ~awaitable() { }
 
-	virtual void then(callback<void(T)> awaiter) = 0;
+	T &value() {
+		return _val.value();
+	}
+
+protected:	
+	template<typename... Args>
+	void emplace_value(Args &&... args) {
+		_val.emplace(std::forward<Args>(args)...);
+	}
+
+private:
+	std::optional<T> _val;
 };
 
 template<>
-struct awaitable<void> {
+struct awaitable<void> : awaitable_base {
 	virtual ~awaitable() { }
-
-	virtual void then(callback<void()> cb) = 0;
 };
 
 template<typename T>

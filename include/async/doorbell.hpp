@@ -7,12 +7,13 @@
 namespace async {
 
 namespace detail {
-	// Lock order: doorbell::_queue_mutex < node::_mutex
 	struct doorbell {
 		struct node : smarter::counter, cancelable_awaitable<void>,
 				boost::intrusive::list_base_hook<> {
+			using cancelable_awaitable<void>::set_ready;
+
 			node(doorbell *owner)
-			: _owner{owner}, _fired{false} {
+			: _owner{owner}, _retired{false} {
 				setup(smarter::adopt_rc, nullptr, 2);
 			}
 
@@ -21,88 +22,56 @@ namespace detail {
 			node &operator= (const node &) = delete;
 
 			void dispose() override {
-				assert(_fired); // This assumption is false if we use cancel().
-				// We inspect _cb without holding the lock.
-				// We someone changes it concurrently, the contract is broken anyway.
-				assert(!_cb);
+				assert(ready());
 				delete this;
 			}
 
-			void pretrigger() {
-				std::lock_guard<std::mutex> lock(_mutex);
-				_fired = true;
-			}
-
-			void trigger() {
-				callback<void()> cb;
-				{
-					std::lock_guard<std::mutex> lock(_mutex);
-
-					cb = std::exchange(_cb, callback<void()>{});
-				}
-
-				if(cb)
-					cb();
-			}
-
-			void then(callback<void()> cb) override {
-				bool already_fired;
-				{
-					std::lock_guard<std::mutex> lock(_mutex);
-					assert(!_cb);
-
-					already_fired = _fired;
-					if(!already_fired)
-						_cb = cb;
-				}
-
-				if(already_fired)
-					cb();
+			void retire() {
+				assert(!_retired);
+				_retired = true;
 			}
 
 			void cancel() override {
 				callback<void()> cb;
 				{
-					std::lock_guard<std::mutex> queue_lock(_owner->_queue_mutex);
-					std::lock_guard<std::mutex> lock(_mutex);
+					std::lock_guard<std::mutex> lock(_owner->_mutex);
 					
-					if(_fired)
+					if(_retired)
 						return;
 
 					auto it = boost::intrusive::list<node>::s_iterator_to(*this);
 					_owner->_queue.erase(it);
-					cb = std::exchange(_cb, callback<void()>{});
-					_fired = true;
+					_retired = true;
 				}
 
-				if(cb)
-					cb();
+				set_ready();
+				decrement();
 			}
 
 		private:
 			doorbell *_owner;
 
-			std::mutex _mutex;
-			bool _fired;
-			callback<void()> _cb;
+			// This field is protected by the _mutex.
+			bool _retired;
 		};
 
 		void ring() {
+			// Grab all items and mark them as retired while we hold the lock.
 			boost::intrusive::list<node> items;
 			{
-				std::lock_guard<std::mutex> queue_lock(_queue_mutex);
+				std::lock_guard<std::mutex> lock(_mutex);
 
-				// Grab all items and mark them as retired while we hold the lock.
 				items.splice(items.end(), _queue);
 				for(auto &ref : items)
-					ref.pretrigger();
+					ref.retire();
 			}
 
+			// Now invoke the individual callbacks.
 			while(!items.empty()) {
 				auto item = &items.front();
 				items.pop_front();
 
-				item->trigger();
+				item->set_ready();
 				item->decrement();
 			}
 		}
@@ -110,7 +79,7 @@ namespace detail {
 		cancelable_result<void> async_wait() {
 			auto item = new node{this};
 			{
-				std::lock_guard<std::mutex> queue_lock(_queue_mutex);
+				std::lock_guard<std::mutex> lock(_mutex);
 				_queue.push_back(*item);
 			}
 
@@ -119,7 +88,7 @@ namespace detail {
 		}
 
 	private:
-		std::mutex _queue_mutex;
+		std::mutex _mutex;
 		boost::intrusive::list<node> _queue;
 	};
 }

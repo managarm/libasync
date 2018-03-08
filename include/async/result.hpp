@@ -44,6 +44,10 @@ namespace detail {
 			return *this;
 		}
 
+		awaitable<T> *get_awaitable() {
+			return object.get();
+		}
+
 	protected:
 		smarter::shared_ptr<awaitable<T>> object;
 	};
@@ -73,6 +77,10 @@ namespace detail {
 			return *this;
 		}
 
+		cancelable_awaitable<T> *get_awaitable() {
+			return object.get();
+		}
+
 	protected:
 		smarter::shared_ptr<cancelable_awaitable<T>> object;
 	};
@@ -84,12 +92,23 @@ private:
 	using detail::result_base<T>::object;
 
 public:
+	result() = default;
+
 	explicit result(smarter::shared_ptr<awaitable<T>> obj)
 	: detail::result_base<T>{std::move(obj)} { }
 
-	void then(callback<void(T)> awaiter) {
+	bool ready() {
+		assert(object);
+		return object->ready();
+	}
+
+	void then(callback<void()> awaiter) {
 		assert(object);
 		object->then(awaiter);
+	}
+
+	T &value() {
+		return object->value();
 	}
 };
 
@@ -99,8 +118,15 @@ private:
 	using detail::result_base<void>::object;
 
 public:
+	result() = default;
+
 	explicit result(smarter::shared_ptr<awaitable<void>> obj)
 	: detail::result_base<void>{std::move(obj)} { }
+
+	bool ready() {
+		assert(object);
+		return object->ready();
+	}
 
 	void then(callback<void()> awaiter) {
 		assert(object);
@@ -181,23 +207,19 @@ namespace detail {
 		template<typename H>
 		void await_suspend(H handle) {
 			_address = handle.address();
-			_res.then([this] (T value) {
-				new (&_value) T{std::move(value)};
+			_res.then([this] () {
 				H::from_address(_address).resume();
 			});
 		}
 
 		T await_resume() {
-			auto p = reinterpret_cast<T *>(&_value);
-			T value = std::move(*p);
-			p->~T();
-			return value;
+			assert(_res.ready());
+			return std::move(_res.value());
 		}
 
 	private:
 		result<T> _res;
 		void *_address;
-		std::aligned_storage_t<sizeof(T), alignof(T)> _value;
 	};
 	
 	template<>
@@ -251,83 +273,23 @@ namespace detail {
 
 	template<typename T>
 	struct promise_state : smarter::counter, awaitable<T> {
-	public:
-		promise_state()
-		: _flags(0) { }
-
-		void set_value(T value) {
-			new (&_value) T{std::move(value)};
-
-			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
-			assert(!(f & has_value));
-			if(f & has_awaiter) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				if(_awaiter) {
-					auto res = std::move(*vp);
-					vp->~T();
-					_awaiter(std::move(res));
-				}
-			}
-		}
-
-		void then(callback<void(T)> awaiter) override {
-			_awaiter = awaiter;
-
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(!(f & has_awaiter));
-			if(f & has_value) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				auto res = std::move(*vp);
-				vp->~T();
-				_awaiter(std::move(res));
-			}
-		}
+		using awaitable<T>::emplace_value;
+		using awaitable<T>::set_ready;
 
 		void dispose() override {
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(f & has_value);
+			// TODO: Review assertions here.
 			delete this;
 		}
-
-	private:
-		std::atomic<unsigned int> _flags;
-		std::aligned_storage_t<sizeof(T), alignof(T)> _value;
-		callback<void(T)> _awaiter;
 	};
 	
 	template<>
 	struct promise_state<void> : smarter::counter, awaitable<void> {
-		promise_state()
-		: _flags(0) { }
-
-		void set_value() {
-			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
-			assert(!(f & has_value));
-			if(f & has_awaiter) {
-				if(_awaiter)
-					_awaiter();
-			}
-		}
-
-		void then(callback<void()> awaiter) override {
-			_awaiter = awaiter;
-
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(!(f & has_awaiter));
-			if(f & has_value) {
-				_awaiter();
-			}
-		}
+		using awaitable<void>::set_ready;
 
 		void dispose() override {
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(f & has_value);
+			// TODO: Review assertions here.
 			delete this;
 		}
-
-	private:
-		std::atomic<unsigned int> _flags;
-		callback<void()> _awaiter;
 	};
 
 	template<typename T>
@@ -378,7 +340,8 @@ public:
 	void set_value(T value) {
 		assert(setter);
 		auto s = std::exchange(setter, nullptr);
-		s->set_value(std::move(value));
+		s->emplace_value(std::move(value));
+		s->set_ready();
 	}
 
 	result<T> async_get() {
@@ -397,7 +360,7 @@ public:
 	void set_value() {
 		assert(setter);
 		auto s = std::exchange(setter, nullptr);
-		s->set_value();
+		s->set_ready();
 	}
 
 	result<void> async_get() {
@@ -441,74 +404,14 @@ namespace detail {
 
 	template<typename T>
 	struct pledge : private pledge_base<T> {
-		pledge()
-		: _flags(0) { }
-
-		void set_value(T value) {
-			new (&_value) T{std::move(value)};
-
-			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
-			assert(!(f & has_value));
-			if(f & has_awaiter) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				if(_awaiter) {
-					auto res = std::move(*vp);
-					vp->~T();
-					_awaiter(std::move(res));
-				}
-			}
-		}
-
+		using pledge_base<void>::emplace_value;
 		using pledge_base<void>::async_get;
-
-	private:
-		void then(callback<void(T)> awaiter) override {
-			_awaiter = awaiter;
-
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(!(f & has_awaiter));
-			if(f & has_value) {
-				auto vp = reinterpret_cast<T *>(&_value);
-				auto res = std::move(*vp);
-				vp->~T();
-				_awaiter(std::move(res));
-			}
-		}
-
-		std::atomic<unsigned int> _flags;
-		std::aligned_storage_t<sizeof(T), alignof(T)> _value;
-		callback<void(T)> _awaiter;
 	};
 
 	template<>
 	struct pledge<void> : private pledge_base<void> {
-		pledge()
-		: _flags(0) { }
-
-		void set_value() {
-			auto f = _flags.fetch_or(has_value, std::memory_order_acq_rel);
-			assert(!(f & has_value));
-			if(f & has_awaiter) {
-				if(_awaiter)
-					_awaiter();
-			}
-		}
-
+		using pledge_base<void>::set_ready;
 		using pledge_base<void>::async_get;
-
-	private:
-		void then(callback<void()> awaiter) override {
-			_awaiter = awaiter;
-
-			auto f = _flags.fetch_or(has_awaiter, std::memory_order_acq_rel);
-			assert(!(f & has_awaiter));
-			if(f & has_value) {
-				_awaiter();
-			}
-		}
-
-		std::atomic<unsigned int> _flags;
-		callback<void()> _awaiter;
 	};
 }
 
@@ -623,11 +526,11 @@ namespace cofiber {
 				: _p{p}, _res{std::move(res)} {
 					_st = new cancel_state<X>;
 
-					_res.then([st = _st] (X result) {
-						st->result = std::move(result);
-						st->ready = true;
-						if(st->waiting)
-							st->handle.resume();
+					_res.then([this] {
+						_st->result = std::move(_res.value());
+						_st->ready = true;
+						if(_st->waiting)
+							_st->handle.resume();
 					});
 				}
 
@@ -661,7 +564,7 @@ namespace cofiber {
 			};
 
 			promise_type()
-			: _future{_promise.async_get()}, _yield_state{nullptr} {
+			: _yield_state{nullptr} {
 				setup(smarter::adopt_rc, nullptr, 2);
 			}
 
@@ -685,16 +588,13 @@ namespace cofiber {
 
 			template<typename... V>
 			void return_value(V &&... value) {
-				_promise.set_value(std::forward<V>(value)...);
+				async::cancelable_awaitable<T>::emplace_value(std::forward<V>(value)...);
+				async::cancelable_awaitable<T>::set_ready();
 			}
 
 			template<typename X>
 			yield_awaiter<X> yield_value(async::result<X> result) {
 				return yield_awaiter<X>{this, std::move(result)};
-			}
-
-			void then(async::callback<void(T)> awaiter) override {
-				_future.then(awaiter);
 			}
 
 			void cancel() override {
@@ -707,8 +607,6 @@ namespace cofiber {
 
 		private:
 			// TODO: Do not use promise here!
-			async::promise<T> _promise;
-			async::result<T> _future;
 			cancel_state_base *_yield_state;
 		};
 	};
@@ -788,11 +686,11 @@ namespace cofiber {
 				: _p{p}, _res{std::move(res)} {
 					_st = new cancel_state<X>;
 
-					_res.then([st = _st] (X result) {
-						st->result = std::move(result);
-						st->ready = true;
-						if(st->waiting)
-							st->handle.resume();
+					_res.then([this] () {
+						_st->result = std::move(_res.value());
+						_st->ready = true;
+						if(_st->waiting)
+							_st->handle.resume();
 					});
 				}
 
@@ -826,7 +724,7 @@ namespace cofiber {
 			};
 
 			promise_type()
-			: _future{_promise.async_get()}, _yield_state{nullptr} {
+			: _yield_state{nullptr} {
 				setup(smarter::adopt_rc, nullptr, 2);
 			}
 
@@ -848,18 +746,13 @@ namespace cofiber {
 			auto initial_suspend() { return suspend_never(); }
 			auto final_suspend() { return suspend_always(); }
 
-			template<typename... V>
-			void return_value(V &&... value) {
-				_promise.set_value(std::forward<V>(value)...);
+			void return_value() {
+				set_ready();
 			}
 
 			template<typename X>
 			yield_awaiter<X> yield_value(async::result<X> result) {
 				return yield_awaiter<X>{this, std::move(result)};
-			}
-
-			void then(async::callback<void()> awaiter) override {
-				_future.then(awaiter);
 			}
 
 			void cancel() override {
@@ -872,8 +765,6 @@ namespace cofiber {
 
 		private:
 			// TODO: Do not use promise here!
-			async::promise<void> _promise;
-			async::result<void> _future;
 			cancel_state_base *_yield_state;
 		};
 	};
