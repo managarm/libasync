@@ -68,6 +68,19 @@ struct awaitable_base {
 			cb();
 	}
 
+	bool interrupt() {
+		std::lock_guard lock{_mutex};
+
+		// Precondition: There must be callback attached to this awaitable
+		// (that might already have been fired if _ready is true).
+		if(_ready)
+			return false;
+		assert(_cb);
+
+		_cb = callback<void()>{};
+		return true;
+	}
+
 protected:
 	void set_ready() {
 		callback<void()> cb;

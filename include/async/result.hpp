@@ -18,6 +18,22 @@ namespace async {
 // Basic result<T> class implementation.
 // ----------------------------------------------------------------------------
 
+template<typename T>
+struct result_reference {
+	result_reference()
+	: object{nullptr} { }
+	
+	result_reference(awaitable<T> *obj)
+	: object{obj} { }
+
+	awaitable<T> *get_awaitable() const {
+		return object;
+	}
+
+protected:
+	awaitable<T> *object;
+};
+
 namespace detail {
 	template<typename T>
 	struct result_base {
@@ -92,10 +108,16 @@ private:
 	using detail::result_base<T>::object;
 
 public:
+	using detail::result_base<T>::get_awaitable;
+
 	result() = default;
 
 	explicit result(smarter::shared_ptr<awaitable<T>> obj)
 	: detail::result_base<T>{std::move(obj)} { }
+
+	operator result_reference<T> () {
+		return result_reference<T>{object.get()};
+	}
 
 	bool ready() {
 		assert(object);
@@ -118,10 +140,16 @@ private:
 	using detail::result_base<void>::object;
 
 public:
+	using detail::result_base<void>::get_awaitable;
+
 	result() = default;
 
 	explicit result(smarter::shared_ptr<awaitable<void>> obj)
 	: detail::result_base<void>{std::move(obj)} { }
+
+	operator result_reference<void> () {
+		return result_reference<void>{object.get()};
+	}
 
 	bool ready() {
 		assert(object);
@@ -259,6 +287,72 @@ async::detail::result_awaiter<T> cofiber_awaiter(async::result<T> res) {
 template<typename T>
 async::detail::result_awaiter<T> cofiber_awaiter(async::cancelable_result<T> res) {
 	return {async::result<T>{std::move(res)}};
+};
+
+template<typename T>
+struct complete_or_cancel {
+	complete_or_cancel(result_reference<T> complete_future, result_reference<void> cancel_future)
+	: _complete_awaitable{complete_future.get_awaitable()},
+			_cancel_awaitable{cancel_future.get_awaitable()},
+			_wait_complete{false}, _wait_cancel{false} {
+		assert(_complete_awaitable);
+	}
+
+	bool await_ready() {
+		return _complete_awaitable->ready()
+				|| (_cancel_awaitable && _cancel_awaitable->ready());
+	}
+
+	void await_suspend(cofiber::coroutine_handle<> handle) {
+		_handle = handle;
+		
+		_wait_complete = true;
+		if(_cancel_awaitable)
+			_wait_cancel = true;
+
+		_complete_awaitable->then([this] {
+			assert(_wait_complete);
+			assert(_complete_awaitable->ready());
+			_wait_complete = false;
+
+			// Interrupt the other callback.
+			if(_cancel_awaitable && _cancel_awaitable->interrupt())
+				_wait_cancel = false;
+
+			// Only resume after both callbacks are disarmed.
+			if(!_wait_cancel)
+				_handle.resume();
+		});	
+	
+		if(_cancel_awaitable)
+			_cancel_awaitable->then([this] {
+				assert(_wait_cancel);
+				assert(_cancel_awaitable->ready());
+				_wait_cancel = false;
+
+				// Interrupt the other callback.
+				if(_complete_awaitable->interrupt())
+					_wait_complete = false;
+
+				// Only resume after both callbacks are disarmed.
+				if(!_wait_complete)
+					_handle.resume();
+			});
+	}
+
+	bool await_resume() {
+		assert(!_wait_complete && !_wait_cancel);
+		assert(_complete_awaitable->ready()
+				|| (_cancel_awaitable && _cancel_awaitable->ready()));
+		return _complete_awaitable->ready();
+	}
+
+private:
+	awaitable<T> *_complete_awaitable;
+	awaitable<void> *_cancel_awaitable;
+	bool _wait_complete;
+	bool _wait_cancel;
+	cofiber::coroutine_handle<> _handle;
 };
 
 // ----------------------------------------------------------------------------

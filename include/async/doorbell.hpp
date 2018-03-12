@@ -8,12 +8,12 @@ namespace async {
 
 namespace detail {
 	struct doorbell {
-		struct node : smarter::counter, cancelable_awaitable<void>,
+		struct node : smarter::counter, awaitable<void>,
 				boost::intrusive::list_base_hook<> {
-			using cancelable_awaitable<void>::set_ready;
+			using awaitable<void>::set_ready;
 
 			node(doorbell *owner)
-			: _owner{owner}, _retired{false} {
+			: _retired{false} {
 				setup(smarter::adopt_rc, nullptr, 2);
 			}
 
@@ -31,26 +31,11 @@ namespace detail {
 				_retired = true;
 			}
 
-			void cancel() override {
-				callback<void()> cb;
-				{
-					std::lock_guard<std::mutex> lock(_owner->_mutex);
-					
-					if(_retired)
-						return;
-
-					auto it = boost::intrusive::list<node>::s_iterator_to(*this);
-					_owner->_queue.erase(it);
-					_retired = true;
-				}
-
-				set_ready();
-				decrement();
+			bool is_retired() {
+				return _retired;
 			}
 
 		private:
-			doorbell *_owner;
-
 			// This field is protected by the _mutex.
 			bool _retired;
 		};
@@ -76,15 +61,32 @@ namespace detail {
 			}
 		}
 
-		cancelable_result<void> async_wait() {
+		result<void> async_wait() {
 			auto item = new node{this};
 			{
 				std::lock_guard<std::mutex> lock(_mutex);
 				_queue.push_back(*item);
 			}
 
-			smarter::shared_ptr<cancelable_awaitable<void>> ptr{smarter::adopt_rc, item, item};
-			return cancelable_result<void>{std::move(ptr)};
+			smarter::shared_ptr<awaitable<void>> ptr{smarter::adopt_rc, item, item};
+			return result<void>{std::move(ptr)};
+		}
+
+		void cancel_async_wait(result_reference<void> future) {
+			auto item = static_cast<node *>(future.get_awaitable());
+			{
+				std::lock_guard<std::mutex> lock(_mutex);
+				
+				if(item->is_retired())
+					return;
+
+				auto it = boost::intrusive::list<node>::s_iterator_to(*item);
+				_queue.erase(it);
+				item->retire();
+			}
+
+			item->set_ready();
+			item->decrement();
 		}
 
 	private:
