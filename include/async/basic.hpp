@@ -4,6 +4,8 @@
 #include <mutex>
 #include <optional>
 
+#include <boost/intrusive/list.hpp>
+
 namespace async {
 
 template<typename S>
@@ -45,63 +47,187 @@ private:
 	std::aligned_storage_t<sizeof(void *), alignof(void *)> _object;
 };
 
+struct awaitable_base;
+struct io_service;
+struct run_queue;
+struct queue_scope;
+
+run_queue *get_current_queue();
+
 struct awaitable_base {
-	awaitable_base()
-	: _ready{false} { }
+	friend struct run_queue;
+
+private:
+	static constexpr int consumer_alive = 1;
+	static constexpr int producer_alive = 2;
+
+	enum class ready_state {
+		null, ready, retired
+	};
+
+public:
+	awaitable_base();
+
+	awaitable_base(const awaitable_base &) = delete;
+
+	awaitable_base &operator= (const awaitable_base &) = delete;
 
 	bool ready() {
-		std::lock_guard lock{_mutex};
-		return _ready;
+		assert(get_current_queue() == _associated_queue);
+		return _ready.load(std::memory_order_acquire) != ready_state::null;
 	}
 
 	void then(callback<void()> cb) {
+		assert(get_current_queue() == _associated_queue);
+		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
+		assert(!_cb);
 		assert(cb);
-		{
-			std::lock_guard lock{_mutex};
-			assert(!_cb);
-
-			if(!_ready)
-				_cb = std::exchange(cb, callback<void()>{});
-		}
-
-		if(cb)
-			cb();
+		_cb = cb;
 	}
 
 	bool interrupt() {
-		std::lock_guard lock{_mutex};
-
-		// Precondition: There must be callback attached to this awaitable
-		// (that might already have been fired if _ready is true).
-		if(_ready)
-			return false;
+		assert(get_current_queue() == _associated_queue);
+		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
 		assert(_cb);
-
 		_cb = callback<void()>{};
 		return true;
 	}
 
+	void drop() {
+		assert(get_current_queue() == _associated_queue);
+		assert(_lifetime & consumer_alive);
+		if(!(_lifetime &= ~consumer_alive))
+			dispose();
+	}
+
 protected:
-	void set_ready() {
-		callback<void()> cb;
-		{
-			std::lock_guard lock{_mutex};
-			assert(!_ready);
+	void set_ready();
 
-			_ready = true;
-			cb = std::exchange(_cb, callback<void()>{});
-		}
+	virtual void dispose() = 0;
 
-		if(cb)
-			cb();
+private:
+	void _retire() {
+		// TODO: Do we actually need release semantics here?
+		assert(_ready.load(std::memory_order_relaxed) == ready_state::ready);
+		_ready.store(ready_state::retired, std::memory_order_release);
+		if(_cb)
+			_cb();
+
+		assert(_lifetime & producer_alive);
+		if(!(_lifetime &= ~producer_alive))
+			dispose();
 	}
 
 private:
-	// TODO: Use light-weight atomics instead of a mutex.
-	std::mutex _mutex;
-	bool _ready;
+	run_queue *_associated_queue;
+	int _lifetime;
+	std::atomic<ready_state> _ready;
+	boost::intrusive::list_member_hook<> _queue_hook;
 	callback<void()> _cb;
 };
+
+struct io_service {
+	virtual void wait() = 0;
+};
+
+struct run_queue {
+	friend struct awaitable_base;
+
+	run_queue(io_service *io_svc)
+	: _io_svc{io_svc} { }
+
+private:
+	void _post(awaitable_base *node);
+
+public:
+	void run();
+
+private:
+	io_service *_io_svc;
+
+	boost::intrusive::list<
+		awaitable_base,
+		boost::intrusive::member_hook<
+			awaitable_base,
+			boost::intrusive::list_member_hook<>,
+			&awaitable_base::_queue_hook
+		>
+	> _run_list;
+};
+
+struct queue_scope {
+	queue_scope(run_queue *queue);
+
+	queue_scope(const queue_scope &) = delete;
+
+	~queue_scope();
+	
+	queue_scope &operator= (const queue_scope &) = delete;
+
+private:
+	run_queue *_queue;
+};
+
+// ----------------------------------------------------------------------------
+// awaitable_base implementation.
+// ----------------------------------------------------------------------------
+
+inline awaitable_base::awaitable_base()
+: _lifetime{consumer_alive | producer_alive},
+		_ready{ready_state::null}, _associated_queue{get_current_queue()} {
+	assert(_associated_queue);
+}
+
+inline void awaitable_base::set_ready() {
+	assert(_ready.load(std::memory_order_relaxed) == ready_state::null);
+	_ready.store(ready_state::ready, std::memory_order_release);
+	_associated_queue->_post(this);
+}
+
+// ----------------------------------------------------------------------------
+// run_queue implementation.
+// ----------------------------------------------------------------------------
+
+inline void run_queue::_post(awaitable_base *node) {
+	// TODO: Implement cross-queue posting.
+	assert(get_current_queue() == this);
+
+	_run_list.push_back(*node);
+}
+
+inline void run_queue::run() {
+	queue_scope scope{this};
+
+	while(true) {
+		while(!_run_list.empty()) {
+			auto node = &_run_list.front();
+			_run_list.pop_front();
+			node->_retire();
+		}
+
+		_io_svc->wait();
+	}
+}
+
+// ----------------------------------------------------------------------------
+// queue_scope implementation.
+// ----------------------------------------------------------------------------
+
+inline thread_local run_queue *_thread_current_queue{nullptr};
+
+inline run_queue *get_current_queue() {
+	return _thread_current_queue;
+}
+
+inline queue_scope::queue_scope(run_queue *queue)
+: _queue{queue} {
+	_thread_current_queue = _queue;
+}
+
+inline queue_scope::~queue_scope() {
+	assert(_thread_current_queue == _queue);
+	_thread_current_queue = nullptr;
+}
 
 template<typename T>
 struct awaitable : awaitable_base {

@@ -8,14 +8,12 @@ namespace async {
 
 namespace detail {
 	struct doorbell {
-		struct node : smarter::counter, awaitable<void>,
+		struct node : awaitable<void>,
 				boost::intrusive::list_base_hook<> {
 			using awaitable<void>::set_ready;
 
 			node(doorbell *owner)
-			: _retired{false} {
-				setup(smarter::adopt_rc, nullptr, 2);
-			}
+			: _retired{false} { }
 
 			node(const node &) = delete;
 
@@ -57,7 +55,6 @@ namespace detail {
 				items.pop_front();
 
 				item->set_ready();
-				item->decrement();
 			}
 		}
 
@@ -68,8 +65,7 @@ namespace detail {
 				_queue.push_back(*item);
 			}
 
-			smarter::shared_ptr<awaitable<void>> ptr{smarter::adopt_rc, item, item};
-			return result<void>{std::move(ptr)};
+			return result<void>{item};
 		}
 
 		void cancel_async_wait(result_reference<void> future) {
@@ -86,7 +82,6 @@ namespace detail {
 			}
 
 			item->set_ready();
-			item->decrement();
 		}
 
 	private:

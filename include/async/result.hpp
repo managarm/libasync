@@ -10,7 +10,6 @@
 
 #include <async/basic.hpp>
 #include <cofiber.hpp>
-#include <smarter.hpp>
 
 namespace async {
 
@@ -52,8 +51,13 @@ namespace detail {
 			swap(*this, other);
 		}
 
-		explicit result_base(smarter::shared_ptr<awaitable<T>> obj)
-		: object{std::move(obj)} { }
+		explicit result_base(awaitable<T> *obj)
+		: object{obj} { }
+
+		~result_base() {
+			if(object)
+				object->drop();
+		}
 
 		result_base &operator= (result_base other) {
 			swap(*this, other);
@@ -61,11 +65,11 @@ namespace detail {
 		}
 
 		awaitable<T> *get_awaitable() {
-			return object.get();
+			return object;
 		}
 
 	protected:
-		smarter::shared_ptr<awaitable<T>> object;
+		awaitable<T> *object;
 	};
 	
 	template<typename T>
@@ -85,8 +89,13 @@ namespace detail {
 			swap(*this, other);
 		}
 
-		explicit cancelable_result_base(smarter::shared_ptr<cancelable_awaitable<T>> obj)
-		: object{std::move(obj)} { }
+		explicit cancelable_result_base(cancelable_awaitable<T> *obj)
+		: object{obj} { }
+
+		~cancelable_result_base() {
+			if(object)
+				object->drop();
+		}
 
 		cancelable_result_base &operator= (cancelable_result_base other) {
 			swap(*this, other);
@@ -94,11 +103,11 @@ namespace detail {
 		}
 
 		cancelable_awaitable<T> *get_awaitable() {
-			return object.get();
+			return object;
 		}
 
 	protected:
-		smarter::shared_ptr<cancelable_awaitable<T>> object;
+		cancelable_awaitable<T> *object;
 	};
 }
 
@@ -112,11 +121,11 @@ public:
 
 	result() = default;
 
-	explicit result(smarter::shared_ptr<awaitable<T>> obj)
-	: detail::result_base<T>{std::move(obj)} { }
+	explicit result(awaitable<T> *obj)
+	: detail::result_base<T>{obj} { }
 
 	operator result_reference<T> () {
-		return result_reference<T>{object.get()};
+		return result_reference<T>{object};
 	}
 
 	bool ready() {
@@ -144,11 +153,11 @@ public:
 
 	result() = default;
 
-	explicit result(smarter::shared_ptr<awaitable<void>> obj)
-	: detail::result_base<void>{std::move(obj)} { }
+	explicit result(awaitable<void> *obj)
+	: detail::result_base<void>{obj} { }
 
 	operator result_reference<void> () {
-		return result_reference<void>{object.get()};
+		return result_reference<void>{object};
 	}
 
 	bool ready() {
@@ -170,8 +179,8 @@ private:
 public:
 	cancelable_result() = default;
 
-	explicit cancelable_result(smarter::shared_ptr<cancelable_awaitable<T>> obj)
-	: detail::cancelable_result_base<T>{std::move(obj)} { }
+	explicit cancelable_result(cancelable_awaitable<T> *obj)
+	: detail::cancelable_result_base<T>{obj} { }
 	
 	operator result<T> () && {
 		return result<T>{std::exchange(object, nullptr)};
@@ -196,8 +205,8 @@ private:
 public:
 	cancelable_result() = default;
 
-	explicit cancelable_result(smarter::shared_ptr<cancelable_awaitable<void>> obj)
-	: detail::cancelable_result_base<void>{std::move(obj)} { }
+	explicit cancelable_result(cancelable_awaitable<void> *obj)
+	: detail::cancelable_result_base<void>{obj} { }
 	
 	operator result<void> () && {
 		return result<void>{std::exchange(object, nullptr)};
@@ -260,7 +269,7 @@ namespace detail {
 		result_awaiter &operator= (const result_awaiter &) = delete;
 
 		bool await_ready() {
-			return false;
+			return _res.ready();
 		}
 
 		template<typename H>
@@ -310,6 +319,7 @@ struct complete_or_cancel {
 		if(_cancel_awaitable)
 			_wait_cancel = true;
 
+		assert(!_complete_awaitable->ready());
 		_complete_awaitable->then([this] {
 			assert(_wait_complete);
 			assert(_complete_awaitable->ready());
@@ -324,7 +334,8 @@ struct complete_or_cancel {
 				_handle.resume();
 		});	
 	
-		if(_cancel_awaitable)
+		if(_cancel_awaitable) {
+			assert(!_cancel_awaitable->ready());
 			_cancel_awaitable->then([this] {
 				assert(_wait_cancel);
 				assert(_cancel_awaitable->ready());
@@ -338,6 +349,7 @@ struct complete_or_cancel {
 				if(!_wait_complete)
 					_handle.resume();
 			});
+		}
 	}
 
 	bool await_resume() {
@@ -366,7 +378,7 @@ namespace detail {
 	};
 
 	template<typename T>
-	struct promise_state : smarter::counter, awaitable<T> {
+	struct promise_state : awaitable<T> {
 		using awaitable<T>::emplace_value;
 		using awaitable<T>::set_ready;
 
@@ -377,7 +389,7 @@ namespace detail {
 	};
 	
 	template<>
-	struct promise_state<void> : smarter::counter, awaitable<void> {
+	struct promise_state<void> : awaitable<void> {
 		using awaitable<void>::set_ready;
 
 		void dispose() override {
@@ -396,9 +408,8 @@ namespace detail {
 
 		promise_base() {
 			auto st = new promise_state<T>{};
-			st->setup(smarter::adopt_rc, nullptr, 2);
-			setter = smarter::shared_ptr<promise_state<T>>{smarter::adopt_rc, st, st};
-			getter = smarter::shared_ptr<promise_state<T>>{smarter::adopt_rc, st, st};
+			setter = st;
+			getter = st;
 		}
 
 		promise_base(const promise_base &) = delete;
@@ -419,8 +430,8 @@ namespace detail {
 		}
 
 	protected:
-		smarter::shared_ptr<promise_state<T>> setter;
-		smarter::shared_ptr<promise_state<T>> getter;
+		promise_state<T> *setter;
+		promise_state<T> *getter;
 	};
 }
 
@@ -469,11 +480,9 @@ public:
 
 namespace detail {
 	template<typename T>
-	struct pledge_base : smarter::counter, awaitable<T> {
+	struct pledge_base : awaitable<T> {
 		pledge_base()
-		: _retrieved(false) {
-			setup(smarter::adopt_rc, nullptr, 1);
-		}
+		: _retrieved(false) { }
 
 		pledge_base(const pledge_base &) = delete;
 
@@ -489,7 +498,7 @@ namespace detail {
 
 		result<T> async_get() {
 			assert(!std::exchange(_retrieved, true));
-			return result<T>{smarter::shared_ptr<pledge_base>{smarter::adopt_rc, this, this}};
+			return result<T>{this};
 		}
 
 	protected:
@@ -518,18 +527,16 @@ using detail::pledge;
 // ----------------------------------------------------------------------------
 
 namespace async {
-	struct cancel_future_t { };
+	struct want_cancel_future_t { };
 
-	inline constexpr cancel_future_t cancel_future;
+	inline constexpr want_cancel_future_t want_cancel_future;
 }
 
 namespace cofiber {
 	template<typename T>
 	struct coroutine_traits<async::result<T>> {
-		struct promise_type : private smarter::counter, private async::awaitable<T> {
-			promise_type() {
-				setup(smarter::adopt_rc, nullptr, 2);
-			}
+		struct promise_type : private async::awaitable<T> {
+			promise_type() { }
 
 		private:
 			void dispose() override {
@@ -539,11 +546,11 @@ namespace cofiber {
 
 		public:
 			async::result<T> get_return_object(coroutine_handle<>) {
-				smarter::shared_ptr<async::awaitable<T>> ptr{smarter::adopt_rc, this, this};
-				return async::result<T>{std::move(ptr)};
+				return async::result<T>{this};
 			}
 
-			auto initial_suspend() { return suspend_never(); }
+			auto initial_suspend() { return suspend_never{}; }
+
 			auto final_suspend() {
 				struct awaiter {
 					awaiter(promise_type *p)
@@ -554,7 +561,7 @@ namespace cofiber {
 					}
 
 					void await_suspend(cofiber::coroutine_handle<>) {
-						_p->decrement();
+						_p->set_ready();
 					}
 
 					void await_resume() {
@@ -573,11 +580,96 @@ namespace cofiber {
 			template<typename... V>
 			void return_value(V &&... value) {
 				async::awaitable<T>::emplace_value(std::forward<V>(value)...);
-				async::awaitable<T>::set_ready();
 			}
 		};
 	};
 	
+	template<typename T>
+	struct coroutine_traits<async::cancelable_result<T>> {
+		struct promise_type : private async::cancelable_awaitable<T> {
+			promise_type() { }
+
+		private:
+			void dispose() override {
+				auto handle = coroutine_handle<promise_type>::from_promise(*this);
+				handle.destroy();
+			}
+
+		public:
+			async::cancelable_result<T> get_return_object(coroutine_handle<>) {
+				return async::cancelable_result<T>{this};
+			}
+
+			auto initial_suspend() { return suspend_never{}; }
+			auto final_suspend() {
+				struct awaiter {
+					awaiter(promise_type *p)
+					: _p{p} { }
+
+					bool await_ready() {
+						return false;
+					}
+
+					void await_suspend(cofiber::coroutine_handle<>) {
+						_p->set_ready();
+					}
+
+					void await_resume() {
+						std::cerr << "libasync: Internal fatal error:"
+								" Coroutine resumed from final suspension point." << std::endl;
+						std::terminate();
+					}
+
+				private:
+					promise_type *_p;
+				};
+
+				return awaiter{this};
+			}
+
+			template<typename... V>
+			void return_value(V &&... value) {
+				async::awaitable<T>::emplace_value(std::forward<V>(value)...);
+			}
+
+		private:
+			struct yield_awaiter {
+				yield_awaiter(promise_type *p)
+				: _p{p} { }
+
+				bool await_ready() {
+					return true;
+				}
+
+				void await_suspend(cofiber::coroutine_handle<>) {
+						std::cerr << "libasync: Internal fatal error:"
+								" Coroutine suspened in yield_awaiter." << std::endl;
+						std::terminate();
+				}
+
+				async::result<void> await_resume() {
+					return _p->_cp.async_get();
+				}
+			
+			private:
+				promise_type *_p;
+			};
+
+		public:
+			yield_awaiter yield_value(async::want_cancel_future_t) {
+				return yield_awaiter{this};
+			}
+
+			void cancel() override {
+				_cp.set_value();
+			}
+
+		private:
+			async::promise<void> _cp;
+		};
+	};
+
+/*
 	template<typename T>
 	struct coroutine_traits<async::cancelable_result<T>> {
 		struct promise_type
@@ -895,6 +987,7 @@ namespace cofiber {
 			cancel_state_base *_yield_state;
 		};
 	};
+*/
 }
 
 #endif // ASYNC_RESULT_HPP

@@ -8,12 +8,10 @@ namespace async {
 
 namespace detail {
 	struct mutex {
-		struct node : smarter::counter, awaitable<void> {
+		struct node : awaitable<void> {
 			using awaitable<void>::set_ready;
 
-			node() {
-				setup(smarter::adopt_rc, nullptr, 2);
-			}
+			node() { }
 
 			node(const node &) = delete;
 
@@ -37,13 +35,11 @@ namespace detail {
 					_waiters.push_back(item);
 				}else{
 					item->set_ready();
-					item->decrement();
 					_locked = true;
 				}
 			}
 
-			smarter::shared_ptr<awaitable<void>> ptr{smarter::adopt_rc, item, item};
-			return result<void>{std::move(ptr)};
+			return result<void>{item};
 		}
 
 		void unlock() {
@@ -56,7 +52,6 @@ namespace detail {
 				auto item = _waiters.front();
 				_waiters.pop_front();
 				item->set_ready();
-				item->decrement();
 			}
 		}
 
