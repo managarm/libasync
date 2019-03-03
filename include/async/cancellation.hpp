@@ -16,11 +16,13 @@ private:
 };
 
 struct cancellation_event {
+	friend struct cancellation_token;
+
 	template<typename F>
 	friend struct cancellation_callback;
 
 	cancellation_event()
-	: _was_triggerd{false} { };
+	: _was_requested{false} { };
 
 	cancellation_event(const cancellation_event &) = delete;
 	cancellation_event(cancellation_event &&) = delete;
@@ -38,7 +40,7 @@ struct cancellation_event {
 private:
 	std::mutex _mutex;
 
-	bool _was_triggerd;
+	bool _was_requested;
 
 	boost::intrusive::list<
 		abstract_cancellation_callback,
@@ -60,6 +62,13 @@ struct cancellation_token {
 	cancellation_token(cancellation_event &event_ref)
 	: _event{&event_ref} { }
 
+	bool is_cancellation_requested() const {
+		if(!_event)
+			return false;
+		std::lock_guard guard{_event->_mutex};
+		return _event->_was_requested;
+	}
+
 private:
 	cancellation_event *_event;
 };
@@ -70,10 +79,10 @@ struct cancellation_callback : abstract_cancellation_callback {
 	: _event{token._event}, _functor{std::move(functor)} {
 		if(!_event)
 			return;
-		if(_event->_was_triggerd) {
+		std::lock_guard guard{_event->_mutex};
+		if(_event->_was_requested) {
 			_functor();
 		}else{
-			std::lock_guard guard{_event->_mutex};
 			_event->_cbs.push_back(*this);
 		}
 	}
@@ -85,7 +94,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 		if(!_event)
 			return;
 		std::lock_guard guard{_event->_mutex};
-		if(!_event->_was_triggerd) {
+		if(!_event->_was_requested) {
 			auto it = _event->_cbs.iterator_to(*this);
 			_event->_cbs.erase(it);
 		}
@@ -105,7 +114,7 @@ private:
 
 inline void cancellation_event::cancel() {
 	std::lock_guard guard{_mutex};
-	_was_triggerd = true;
+	_was_requested = true;
 	for(abstract_cancellation_callback &cb : _cbs)
 		cb.call();
 	_cbs.clear();
