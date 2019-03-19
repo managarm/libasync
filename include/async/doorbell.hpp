@@ -8,34 +8,47 @@ namespace async {
 
 namespace detail {
 	struct doorbell {
+		enum class state {
+			null,
+			queued,
+			cancelled,
+			done
+		};
+
 		struct node : awaitable<void>,
 				boost::intrusive::list_base_hook<> {
+			friend struct doorbell;
+
 			using awaitable<void>::set_ready;
 
 			node(doorbell *owner)
-			: _retired{false} { }
+			: _owner{owner}, _state{state::null} { }
 
 			node(const node &) = delete;
 
 			node &operator= (const node &) = delete;
+
+			void submit() override {
+				std::lock_guard<std::mutex> lock(_owner->_mutex);
+				if(_state == state::cancelled) {
+					set_ready();
+					return;
+				}
+				assert(_state == state::null);
+				_state = state::queued;
+				_owner->_queue.push_back(*this);
+			}
 
 			void dispose() override {
 				assert(ready());
 				delete this;
 			}
 
-			void retire() {
-				assert(!_retired);
-				_retired = true;
-			}
-
-			bool is_retired() {
-				return _retired;
-			}
-
 		private:
+			doorbell *_owner;
+
 			// This field is protected by the _mutex.
-			bool _retired;
+			state _state;
 		};
 
 		void ring() {
@@ -45,43 +58,44 @@ namespace detail {
 				std::lock_guard<std::mutex> lock(_mutex);
 
 				items.splice(items.end(), _queue);
-				for(auto &ref : items)
-					ref.retire();
+				for(auto &ref : items) {
+					assert(ref._state == state::queued);
+					ref._state = state::done;
+				}
 			}
 
 			// Now invoke the individual callbacks.
 			while(!items.empty()) {
 				auto item = &items.front();
 				items.pop_front();
-
 				item->set_ready();
 			}
 		}
 
 		result<void> async_wait() {
-			auto item = new node{this};
-			{
-				std::lock_guard<std::mutex> lock(_mutex);
-				_queue.push_back(*item);
-			}
-
-			return result<void>{item};
+			return result<void>{new node{this}};
 		}
 
 		void cancel_async_wait(result_reference<void> future) {
 			auto item = static_cast<node *>(future.get_awaitable());
+			bool became_ready = false;
 			{
 				std::lock_guard<std::mutex> lock(_mutex);
 				
-				if(item->is_retired())
+				if(item->_state == state::done)
 					return;
 
-				auto it = boost::intrusive::list<node>::s_iterator_to(*item);
-				_queue.erase(it);
-				item->retire();
+				if(item->_state == state::queued) {
+					auto it = boost::intrusive::list<node>::s_iterator_to(*item);
+					_queue.erase(it);
+					became_ready = true;
+				}else
+					assert(item->_state == state::null);
+				item->_state = state::cancelled;
 			}
 
-			item->set_ready();
+			if(became_ready)
+				item->set_ready();
 		}
 
 	private:

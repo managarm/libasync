@@ -11,35 +11,38 @@ namespace detail {
 		struct node : awaitable<void> {
 			using awaitable<void>::set_ready;
 
-			node() { }
+			node(mutex *owner)
+			: _owner{owner} { }
 
 			node(const node &) = delete;
 
 			node &operator= (const node &) = delete;
 
+			void submit() override {
+				std::lock_guard<std::mutex> lock(_owner->_mutex);
+
+				if(_owner->_locked) {
+					_owner->_waiters.push_back(this);
+				}else{
+					set_ready();
+					_owner->_locked = true;
+				}
+			}
+
 			void dispose() override {
 				assert(ready());
 				delete this;
 			}
+
+		private:
+			mutex *_owner;
 		};
 
 		mutex()
 		: _locked{false} { }
 
 		result<void> async_lock() {
-			auto item = new node;
-			{
-				std::lock_guard<std::mutex> lock(_mutex);
-
-				if(_locked) {
-					_waiters.push_back(item);
-				}else{
-					item->set_ready();
-					_locked = true;
-				}
-			}
-
-			return result<void>{item};
+			return result<void>{new node{this}};
 		}
 
 		void unlock() {

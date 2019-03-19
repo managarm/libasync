@@ -21,7 +21,7 @@ template<typename T>
 struct result_reference {
 	result_reference()
 	: object{nullptr} { }
-	
+
 	result_reference(awaitable<T> *obj)
 	: object{obj} { }
 
@@ -168,7 +168,7 @@ namespace detail {
 		result<T> _res;
 		void *_address;
 	};
-	
+
 	template<>
 	struct result_awaiter<void> {
 		result_awaiter(result<void> res)
@@ -218,20 +218,52 @@ namespace detail {
 		using awaitable<T>::emplace_value;
 		using awaitable<T>::set_ready;
 
-		void dispose() override {
-			// TODO: Review assertions here.
-			delete this;
+		void submit() override {
+			_active = true;
+			if(_raised)
+				set_ready();
 		}
-	};
-	
-	template<>
-	struct promise_state<void> : awaitable<void> {
-		using awaitable<void>::set_ready;
 
 		void dispose() override {
 			// TODO: Review assertions here.
 			delete this;
 		}
+
+		void raise() {
+			_raised = true;
+			if(_active)
+				set_ready();
+		}
+
+	private:
+		bool _active = false;
+		bool _raised = false;
+	};
+
+	template<>
+	struct promise_state<void> : awaitable<void> {
+		using awaitable<void>::set_ready;
+
+		void submit() override {
+			_active = true;
+			if(_raised)
+				set_ready();
+		}
+
+		void dispose() override {
+			// TODO: Review assertions here.
+			delete this;
+		}
+
+		void raise() {
+			_raised = true;
+			if(_active)
+				set_ready();
+		}
+
+	private:
+		bool _active = false;
+		bool _raised = false;
 	};
 
 	template<typename T>
@@ -282,7 +314,7 @@ public:
 		assert(setter);
 		auto s = std::exchange(setter, nullptr);
 		s->emplace_value(std::move(value));
-		s->set_ready();
+		s->raise();
 	}
 
 	result<T> async_get() {
@@ -301,7 +333,7 @@ public:
 	void set_value() {
 		assert(setter);
 		auto s = std::exchange(setter, nullptr);
-		s->set_ready();
+		s->raise();
 	}
 
 	result<void> async_get() {
@@ -328,6 +360,12 @@ namespace detail {
 
 		pledge_base &operator= (const pledge_base &other) = delete;
 
+		void submit() override {
+			_active = true;
+			if(_raised)
+				awaitable<T>::set_ready();
+		}
+
 		void dispose() override {
 			std::cout << "libasync: Handle dispose() for pledge" << std::endl;
 		}
@@ -337,8 +375,16 @@ namespace detail {
 			return result<T>{this};
 		}
 
+		void set_ready() {
+			_raised = true;
+			if(_active)
+				awaitable<T>::set_ready();
+		}
+
 	protected:
 		bool _retrieved;
+		bool _active = false;
+		bool _raised = false;
 	};
 
 	template<typename T>
@@ -349,7 +395,6 @@ namespace detail {
 
 	template<>
 	struct pledge<void> : private pledge_base<void> {
-		using pledge_base<void>::set_ready;
 		using pledge_base<void>::async_get;
 	};
 }
@@ -369,6 +414,11 @@ namespace cofiber {
 			promise_type() { }
 
 		private:
+			void submit() override {
+				auto handle = coroutine_handle<promise_type>::from_promise(*this);
+				handle.resume();
+			}
+
 			void dispose() override {
 				auto handle = coroutine_handle<promise_type>::from_promise(*this);
 				handle.destroy();
@@ -379,7 +429,7 @@ namespace cofiber {
 				return async::result<T>{this};
 			}
 
-			auto initial_suspend() { return suspend_never{}; }
+			auto initial_suspend() { return suspend_always{}; }
 
 			auto final_suspend() {
 				struct awaiter {
@@ -414,5 +464,16 @@ namespace cofiber {
 		};
 	};
 }
+
+namespace async {
+
+// TODO: Support non-void results.
+template<typename A>
+COFIBER_ROUTINE(async::result<void>, make_result(A awaitable),
+		([aw = std::move(awaitable)] () mutable {
+	COFIBER_AWAIT std::move(aw);
+}));
+
+} // namespace async
 
 #endif // ASYNC_RESULT_HPP

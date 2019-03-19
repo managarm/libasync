@@ -5,8 +5,30 @@
 #include <optional>
 
 #include <boost/intrusive/list.hpp>
+#include <cofiber.hpp>
 
 namespace async {
+
+namespace detail {
+	// TODO: Use a specialized coroutine promise that allows us to control
+	//       the run_queue that the coroutine is executed on.
+	template<typename A, typename Cont>
+	COFIBER_ROUTINE(cofiber::no_future, do_await(A awaitable, Cont continuation),
+			([aw = std::move(awaitable), ct = std::move(continuation)] () mutable {
+		COFIBER_AWAIT std::move(aw);
+		ct();
+	}));
+}
+
+template<typename A>
+void detach(A awaitable) {
+	detach(std::move(awaitable), [] { });
+}
+
+template<typename A, typename Cont>
+void detach(A awaitable, Cont continuation) {
+	do_await(std::move(awaitable), std::move(continuation));
+}
 
 template<typename S>
 struct callback;
@@ -81,27 +103,22 @@ public:
 		assert(get_current_queue() == _associated_queue);
 		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
 		assert(!_cb);
+		assert(!_submitted);
 		assert(cb);
 		_cb = cb;
-	}
-
-	bool interrupt() {
-		assert(get_current_queue() == _associated_queue);
-		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
-		assert(_cb);
-		_cb = callback<void()>{};
-		return true;
+		_submitted = true;
+		submit();
 	}
 
 	void drop() {
 		assert(get_current_queue() == _associated_queue);
-		assert(_lifetime & consumer_alive);
-		if(!(_lifetime &= ~consumer_alive))
-			dispose();
+		dispose();
 	}
 
 protected:
 	void set_ready();
+
+	virtual void submit() = 0;
 
 	virtual void dispose() = 0;
 
@@ -110,17 +127,13 @@ private:
 		// TODO: Do we actually need release semantics here?
 		assert(_ready.load(std::memory_order_relaxed) == ready_state::ready);
 		_ready.store(ready_state::retired, std::memory_order_release);
-		if(_cb)
-			_cb();
-
-		assert(_lifetime & producer_alive);
-		if(!(_lifetime &= ~producer_alive))
-			dispose();
+		assert(_cb);
+		_cb();
 	}
 
 private:
 	run_queue *_associated_queue;
-	int _lifetime;
+	bool _submitted;
 	std::atomic<ready_state> _ready;
 	boost::intrusive::list_member_hook<> _queue_hook;
 	callback<void()> _cb;
@@ -173,13 +186,14 @@ private:
 // ----------------------------------------------------------------------------
 
 inline awaitable_base::awaitable_base()
-: _lifetime{consumer_alive | producer_alive},
+: _submitted{false},
 		_ready{ready_state::null}, _associated_queue{get_current_queue()} {
 	assert(_associated_queue);
 }
 
 inline void awaitable_base::set_ready() {
 	assert(_ready.load(std::memory_order_relaxed) == ready_state::null);
+	assert(_submitted);
 	_ready.store(ready_state::ready, std::memory_order_release);
 	_associated_queue->_post(this);
 }
