@@ -69,74 +69,27 @@ private:
 	std::aligned_storage_t<sizeof(void *), alignof(void *)> _object;
 };
 
-struct awaitable_base;
+// ----------------------------------------------------------------------------
+// run_queue implementation.
+// ----------------------------------------------------------------------------
+
 struct io_service;
 struct run_queue;
-struct queue_scope;
 
 run_queue *get_current_queue();
 
-struct awaitable_base {
+struct run_queue_item {
 	friend struct run_queue;
 
-private:
-	static constexpr int consumer_alive = 1;
-	static constexpr int producer_alive = 2;
-
-	enum class ready_state {
-		null, ready, retired
-	};
-
-public:
-	awaitable_base();
-
-	awaitable_base(const awaitable_base &) = delete;
-
-	awaitable_base &operator= (const awaitable_base &) = delete;
-
-	bool ready() {
-		assert(get_current_queue() == _associated_queue);
-		return _ready.load(std::memory_order_acquire) != ready_state::null;
-	}
-
-	void then(callback<void()> cb) {
-		assert(get_current_queue() == _associated_queue);
-		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
-		assert(!_cb);
-		assert(!_submitted);
-		assert(cb);
+	void arm(callback<void()> cb) {
+		assert(!_cb && "run_queue_item is already armed");
+		assert(cb && "cannot arm run_queue_item with a null callback");
 		_cb = cb;
-		_submitted = true;
-		submit();
-	}
-
-	void drop() {
-		assert(get_current_queue() == _associated_queue);
-		dispose();
-	}
-
-protected:
-	void set_ready();
-
-	virtual void submit() = 0;
-
-	virtual void dispose() = 0;
-
-private:
-	void _retire() {
-		// TODO: Do we actually need release semantics here?
-		assert(_ready.load(std::memory_order_relaxed) == ready_state::ready);
-		_ready.store(ready_state::retired, std::memory_order_release);
-		assert(_cb);
-		_cb();
 	}
 
 private:
-	run_queue *_associated_queue;
-	bool _submitted;
-	std::atomic<ready_state> _ready;
-	boost::intrusive::list_member_hook<> _queue_hook;
 	callback<void()> _cb;
+	boost::intrusive::list_member_hook<> _hook;
 };
 
 struct io_service {
@@ -144,26 +97,23 @@ struct io_service {
 };
 
 struct run_queue {
-	friend struct awaitable_base;
-
 	run_queue(io_service *io_svc)
 	: _io_svc{io_svc} { }
 
-private:
-	void _post(awaitable_base *node);
-
 public:
+	void post(run_queue_item *node);
+
 	void run();
 
 private:
 	io_service *_io_svc;
 
 	boost::intrusive::list<
-		awaitable_base,
+		run_queue_item,
 		boost::intrusive::member_hook<
-			awaitable_base,
+			run_queue_item,
 			boost::intrusive::list_member_hook<>,
-			&awaitable_base::_queue_hook
+			&run_queue_item::_hook
 		>
 	> _run_list;
 };
@@ -181,32 +131,12 @@ private:
 	run_queue *_queue;
 };
 
-// ----------------------------------------------------------------------------
-// awaitable_base implementation.
-// ----------------------------------------------------------------------------
-
-inline awaitable_base::awaitable_base()
-: _submitted{false},
-		_ready{ready_state::null}, _associated_queue{get_current_queue()} {
-	assert(_associated_queue);
-}
-
-inline void awaitable_base::set_ready() {
-	assert(_ready.load(std::memory_order_relaxed) == ready_state::null);
-	assert(_submitted);
-	_ready.store(ready_state::ready, std::memory_order_release);
-	_associated_queue->_post(this);
-}
-
-// ----------------------------------------------------------------------------
-// run_queue implementation.
-// ----------------------------------------------------------------------------
-
-inline void run_queue::_post(awaitable_base *node) {
+inline void run_queue::post(run_queue_item *item) {
 	// TODO: Implement cross-queue posting.
 	assert(get_current_queue() == this);
+	assert(item->_cb && "run_queue_item is posted with a null callback");
 
-	_run_list.push_back(*node);
+	_run_list.push_back(*item);
 }
 
 inline void run_queue::run() {
@@ -214,9 +144,9 @@ inline void run_queue::run() {
 
 	while(true) {
 		while(!_run_list.empty()) {
-			auto node = &_run_list.front();
+			auto item = &_run_list.front();
 			_run_list.pop_front();
-			node->_retire();
+			item->_cb();
 		}
 
 		_io_svc->wait();
@@ -241,6 +171,98 @@ inline queue_scope::queue_scope(run_queue *queue)
 inline queue_scope::~queue_scope() {
 	assert(_thread_current_queue == _queue);
 	_thread_current_queue = nullptr;
+}
+
+// ----------------------------------------------------------------------------
+// Utilities related to run_queues.
+// ----------------------------------------------------------------------------
+
+struct resumption_on_current_queue {
+	struct token {
+		token() = default;
+
+		void arm(const resumption_on_current_queue &, callback<void()> cb) {
+			_rqi.arm(cb);
+		}
+
+		void post(const resumption_on_current_queue &) {
+			auto q = get_current_queue();
+			assert(q && "resumption_on_current_queue token is posted outside of queue");
+			q->post(&_rqi);
+		}
+
+	private:
+		run_queue_item _rqi;
+	};
+};
+
+// ----------------------------------------------------------------------------
+// awaitable.
+// ----------------------------------------------------------------------------
+
+struct awaitable_base {
+	friend struct run_queue;
+
+private:
+	static constexpr int consumer_alive = 1;
+	static constexpr int producer_alive = 2;
+
+	enum class ready_state {
+		null, ready, retired
+	};
+
+public:
+	awaitable_base();
+
+	awaitable_base(const awaitable_base &) = delete;
+
+	awaitable_base &operator= (const awaitable_base &) = delete;
+
+	bool ready() {
+		return _ready.load(std::memory_order_acquire) != ready_state::null;
+	}
+
+	void then(callback<void()> cb) {
+		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
+		_cb = cb;
+		_rt.arm(_rm, [this] { _retire(); });
+		submit();
+	}
+
+	void drop() {
+		dispose();
+	}
+
+protected:
+	void set_ready();
+
+	virtual void submit() = 0;
+
+	virtual void dispose() = 0;
+
+private:
+	void _retire() {
+		// TODO: Do we actually need release semantics here?
+		assert(_ready.load(std::memory_order_relaxed) == ready_state::ready);
+		_ready.store(ready_state::retired, std::memory_order_release);
+		assert(_cb);
+		_cb();
+	}
+
+private:
+	std::atomic<ready_state> _ready;
+	callback<void()> _cb;
+	resumption_on_current_queue _rm;
+	resumption_on_current_queue::token _rt;
+};
+
+inline awaitable_base::awaitable_base()
+: _ready{ready_state::null} { }
+
+inline void awaitable_base::set_ready() {
+	assert(_ready.load(std::memory_order_relaxed) == ready_state::null);
+	_ready.store(ready_state::ready, std::memory_order_release);
+	_rt.post(_rm);
 }
 
 template<typename T>
