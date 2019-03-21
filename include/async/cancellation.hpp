@@ -37,6 +37,8 @@ struct cancellation_event {
 
 	void cancel();
 
+	void reset();
+
 private:
 	std::mutex _mutex;
 
@@ -118,6 +120,11 @@ inline void cancellation_event::cancel() {
 	for(abstract_cancellation_callback &cb : _cbs)
 		cb.call();
 	_cbs.clear();
+}
+
+inline void cancellation_event::reset() {
+	std::lock_guard guard{_mutex};
+	_was_requested = false;
 }
 
 } // namespace async::detail
