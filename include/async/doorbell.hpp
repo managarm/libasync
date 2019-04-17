@@ -2,6 +2,7 @@
 #define ASYNC_DOORBELL_HPP
 
 #include <async/result.hpp>
+#include <async/cancellation.hpp>
 #include <boost/intrusive/list.hpp>
 
 namespace async {
@@ -21,8 +22,9 @@ namespace detail {
 
 			using awaitable<void>::set_ready;
 
-			node(doorbell *owner)
-			: _owner{owner}, _state{state::null} { }
+			node(doorbell *owner, cancellation_token cancellation)
+			: _owner{owner}, _state{state::null},
+					_cancel_cb{cancellation, cancel_handler{this}} { }
 
 			node(const node &) = delete;
 
@@ -45,10 +47,20 @@ namespace detail {
 			}
 
 		private:
+			struct cancel_handler {
+				void operator() () {
+					self->_owner->cancel_async_wait(self);
+				}
+
+				node *self;
+			};
+
 			doorbell *_owner;
 
 			// This field is protected by the _mutex.
 			state _state;
+
+			cancellation_callback<cancel_handler> _cancel_cb;
 		};
 
 		void ring() {
@@ -72,12 +84,16 @@ namespace detail {
 			}
 		}
 
-		result<void> async_wait() {
-			return result<void>{new node{this}};
+		result<void> async_wait(cancellation_token cancellation = {}) {
+			return result<void>{new node{this, cancellation}};
 		}
 
 		void cancel_async_wait(result_reference<void> future) {
 			auto item = static_cast<node *>(future.get_awaitable());
+			return cancel_async_wait(item);
+		}
+
+		void cancel_async_wait(node *item) {
 			bool became_ready = false;
 			{
 				std::lock_guard<std::mutex> lock(_mutex);

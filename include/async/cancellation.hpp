@@ -105,6 +105,16 @@ struct cancellation_callback : abstract_cancellation_callback {
 	cancellation_callback &operator= (const cancellation_callback &) = delete;
 	cancellation_callback &operator= (cancellation_callback &&) = delete;
 
+	void unbind() {
+		if(!_event)
+			return;
+		std::lock_guard guard{_event->_mutex};
+		if(!_event->_was_requested) {
+			auto it = _event->_cbs.iterator_to(*this);
+			_event->_cbs.erase(it);
+		}
+	}
+
 private:
 	void call() override {
 		_functor();
