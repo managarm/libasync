@@ -93,6 +93,8 @@ private:
 };
 
 struct io_service {
+	virtual ~io_service() = default;
+
 	virtual void wait() = 0;
 };
 
