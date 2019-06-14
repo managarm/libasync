@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <atomic>
+#include <experimental/coroutine>
 #include <experimental/optional>
 #include <iostream>
 #include <type_traits>
@@ -34,6 +35,9 @@ protected:
 };
 
 namespace detail {
+	template<typename T>
+	struct result_promise;
+
 	template<typename T>
 	struct result_base {
 		friend void swap(result_base &a, result_base &b) {
@@ -81,6 +85,8 @@ private:
 public:
 	using detail::result_base<T>::get_awaitable;
 
+	using promise_type = detail::result_promise<T>;
+
 	result() = default;
 
 	explicit result(awaitable<T> *obj)
@@ -113,6 +119,8 @@ private:
 public:
 	using detail::result_base<void>::get_awaitable;
 
+	using promise_type = detail::result_promise<void>;
+
 	result() = default;
 
 	explicit result(awaitable<void> *obj)
@@ -132,6 +140,125 @@ public:
 		object->then(awaiter);
 	}
 };
+
+namespace detail {
+	template<typename T>
+	struct result_promise : private async::awaitable<T> {
+		result_promise() { }
+
+	private:
+		void submit() override {
+			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			handle.resume();
+		}
+
+		void dispose() override {
+			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			handle.destroy();
+		}
+
+	public:
+		async::result<T> get_return_object() {
+			return async::result<T>{this};
+		}
+
+		auto initial_suspend() { return std::experimental::suspend_always{}; }
+
+		auto final_suspend() {
+			struct awaiter {
+				awaiter(result_promise *p)
+				: _p{p} { }
+
+				bool await_ready() {
+					return false;
+				}
+
+				void await_suspend(std::experimental::coroutine_handle<>) {
+					_p->set_ready();
+				}
+
+				void await_resume() {
+					std::cerr << "libasync: Internal fatal error:"
+							" Coroutine resumed from final suspension point" << std::endl;
+					std::terminate();
+				}
+
+			private:
+				result_promise *_p;
+			};
+
+			return awaiter{this};
+		}
+
+		template<typename... V>
+		void return_value(V &&... value) {
+			async::awaitable<T>::emplace_value(std::forward<V>(value)...);
+		}
+
+		void unhandled_exception() {
+			std::cerr << "libasync: Unhandled exception in coroutine" << std::endl;
+			std::terminate();
+		}
+	};
+
+	template<>
+	struct result_promise<void> : private async::awaitable<void> {
+		result_promise() { }
+
+	private:
+		void submit() override {
+			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			handle.resume();
+		}
+
+		void dispose() override {
+			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			handle.destroy();
+		}
+
+	public:
+		async::result<void> get_return_object() {
+			return async::result<void>{this};
+		}
+
+		auto initial_suspend() { return std::experimental::suspend_always{}; }
+
+		auto final_suspend() {
+			struct awaiter {
+				awaiter(result_promise *p)
+				: _p{p} { }
+
+				bool await_ready() {
+					return false;
+				}
+
+				void await_suspend(std::experimental::coroutine_handle<>) {
+					_p->set_ready();
+				}
+
+				void await_resume() {
+					std::cerr << "libasync: Internal fatal error:"
+							" Coroutine resumed from final suspension point" << std::endl;
+					std::terminate();
+				}
+
+			private:
+				result_promise *_p;
+			};
+
+			return awaiter{this};
+		}
+
+		void return_void() {
+			async::awaitable<void>::emplace_value();
+		}
+
+		void unhandled_exception() {
+			std::cerr << "libasync: Unhandled exception in coroutine" << std::endl;
+			std::terminate();
+		}
+	};
+}
 
 // ----------------------------------------------------------------------------
 // co_await support for result<T>.
@@ -196,6 +323,11 @@ namespace detail {
 		result<void> _res;
 		void *_address;
 	};
+};
+
+template<typename T>
+async::detail::result_awaiter<T> operator co_await(async::result<T> res) {
+	return {std::move(res)};
 };
 
 template<typename T>
