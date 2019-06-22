@@ -9,27 +9,6 @@
 
 namespace async {
 
-namespace detail {
-	// TODO: Use a specialized coroutine promise that allows us to control
-	//       the run_queue that the coroutine is executed on.
-	template<typename A, typename Cont>
-	COFIBER_ROUTINE(cofiber::no_future, do_await(A awaitable, Cont continuation),
-			([aw = std::move(awaitable), ct = std::move(continuation)] () mutable {
-		COFIBER_AWAIT std::move(aw);
-		ct();
-	}));
-}
-
-template<typename A>
-void detach(A awaitable) {
-	detach(std::move(awaitable), [] { });
-}
-
-template<typename A, typename Cont>
-void detach(A awaitable, Cont continuation) {
-	do_await(std::move(awaitable), std::move(continuation));
-}
-
 template<typename S>
 struct callback;
 
@@ -81,6 +60,12 @@ run_queue *get_current_queue();
 struct run_queue_item {
 	friend struct run_queue;
 
+	run_queue_item() = default;
+
+	run_queue_item(const run_queue_item &) = delete;
+
+	run_queue_item &operator= (const run_queue_item &) = delete;
+
 	void arm(callback<void()> cb) {
 		assert(!_cb && "run_queue_item is already armed");
 		assert(cb && "cannot arm run_queue_item with a null callback");
@@ -126,7 +111,7 @@ struct queue_scope {
 	queue_scope(const queue_scope &) = delete;
 
 	~queue_scope();
-	
+
 	queue_scope &operator= (const queue_scope &) = delete;
 
 private:
@@ -197,6 +182,94 @@ struct resumption_on_current_queue {
 		run_queue_item _rqi;
 	};
 };
+
+// ----------------------------------------------------------------------------
+// Detached coroutines.
+// ----------------------------------------------------------------------------
+
+struct detached {
+	struct promise_type {
+		struct initial_awaiter {
+			bool await_ready() {
+				return false;
+			}
+
+			void await_suspend(std::experimental::coroutine_handle<> h) {
+				_rt.arm(_rm, [address = h.address()] {
+					auto h = std::experimental::coroutine_handle<>::from_address(address);
+					h.resume();
+				});
+				_rt.post(_rm);
+			}
+
+			void await_resume() { }
+
+		private:
+			resumption_on_current_queue _rm;
+			resumption_on_current_queue::token _rt;
+		};
+
+		struct final_awaiter {
+			bool await_ready() {
+				return false;
+			}
+
+			void await_suspend(std::experimental::coroutine_handle<> h) {
+				// Calling h.destroy() here causes the code to break.
+				// TODO: Is this a LLVM bug? Workaround: Defer it to a run_queue.
+				_rt.arm(_rm, [address = h.address()] {
+					auto h = std::experimental::coroutine_handle<>::from_address(address);
+					h.destroy();
+				});
+				_rt.post(_rm);
+			}
+
+			void await_resume() {
+				std::cerr << "libasync: Internal fatal error:"
+						" Coroutine resumed from final suspension point" << std::endl;
+				std::terminate();
+			}
+
+		private:
+			resumption_on_current_queue _rm;
+			resumption_on_current_queue::token _rt;
+		};
+
+		detached get_return_object() {
+			return {};
+		}
+
+		initial_awaiter initial_suspend() {
+			return {};
+		}
+
+		final_awaiter final_suspend() {
+			return {};
+		}
+
+		void return_void() {
+			// Nothing to do here.
+		}
+
+		void unhandled_exception() {
+			std::cerr << "libasync: Unhandled exception in coroutine" << std::endl;
+			std::terminate();
+		}
+	};
+};
+
+template<typename A>
+detached detach(A awaitable) {
+	return detach(std::move(awaitable), [] { });
+}
+
+// TODO: Use a specialized coroutine promise that allows us to control
+//       the run_queue that the coroutine is executed on.
+template<typename A, typename Cont>
+detached detach(A awaitable, Cont continuation) {
+	co_await std::move(awaitable);
+	continuation();
+}
 
 // ----------------------------------------------------------------------------
 // awaitable.
@@ -275,7 +348,7 @@ struct awaitable : awaitable_base {
 		return _val.value();
 	}
 
-protected:	
+protected:
 	template<typename... Args>
 	void emplace_value(Args &&... args) {
 		_val.emplace(std::forward<Args>(args)...);
@@ -288,7 +361,7 @@ private:
 template<>
 struct awaitable<void> : awaitable_base {
 	virtual ~awaitable() { }
-	
+
 protected:
 	void emplace_value() { }
 };
