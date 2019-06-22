@@ -24,8 +24,12 @@ struct jump {
 			return false;
 		}
 
-		void await_suspend(cofiber::coroutine_handle<void> handle) {
-			_coro = handle;
+		template<typename H>
+		void await_suspend(H handle) {
+			_cb = callback<void()>{[address = handle.address()] {
+				auto handle = H::from_address(address);
+				handle.resume();
+			}};
 
 			bool done;
 			{
@@ -36,7 +40,7 @@ struct jump {
 			}
 
 			if(done)
-				_coro.resume();
+				handle.resume();
 		}
 
 		void await_resume() {
@@ -45,7 +49,7 @@ struct jump {
 
 	private:
 		jump *_owner;
-		cofiber::coroutine_handle<void> _coro;
+		callback<void()> _cb;
 	};
 
 	jump()
@@ -63,7 +67,7 @@ struct jump {
 		while(!items.empty()) {
 			auto item = &items.front();
 			items.pop_front();
-			item->_coro.resume();
+			item->_cb();
 		}
 	}
 
