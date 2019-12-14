@@ -3,7 +3,9 @@
 
 #include <async/result.hpp>
 #include <async/doorbell.hpp>
+#include <async/cancellation.hpp>
 #include <queue>
+#include <optional>
 
 namespace async {
 
@@ -14,9 +16,12 @@ struct queue {
 		_doorbell.ring();
 	}
 
-	async::result<T> async_get() {
-		while (_queue.empty())
-			co_await _doorbell.async_wait();
+	async::result<std::optional<T>> async_get(async::cancellation_token token = {}) {
+		while (_queue.empty() && !token.is_cancellation_requested())
+			co_await _doorbell.async_wait(token);
+
+		if (token.is_cancellation_requested())
+			co_return std::nullopt;
 
 		auto v = _queue.front();
 		_queue.pop();
