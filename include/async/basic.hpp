@@ -5,7 +5,6 @@
 #include <optional>
 
 #include <boost/intrusive/list.hpp>
-#include <cofiber.hpp>
 
 namespace async {
 

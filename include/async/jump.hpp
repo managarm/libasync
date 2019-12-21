@@ -7,7 +7,6 @@
 #include <async/result.hpp>
 #include <async/doorbell.hpp>
 #include <boost/intrusive/list.hpp>
-#include <cofiber.hpp>
 
 namespace async {
 

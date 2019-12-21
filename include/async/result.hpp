@@ -10,7 +10,6 @@
 #include <utility>
 
 #include <async/basic.hpp>
-#include <cofiber.hpp>
 
 namespace async {
 
@@ -330,11 +329,6 @@ async::detail::result_awaiter<T> operator co_await(async::result<T> res) {
 	return {std::move(res)};
 };
 
-template<typename T>
-async::detail::result_awaiter<T> cofiber_awaiter(async::result<T> res) {
-	return {std::move(res)};
-};
-
 // ----------------------------------------------------------------------------
 // promise<T> class implementation.
 // ----------------------------------------------------------------------------
@@ -533,78 +527,11 @@ namespace detail {
 
 using detail::pledge;
 
-} // namespace async
-
-// ----------------------------------------------------------------------------
-// Support for using result<T> as a coroutine return type.
-// ----------------------------------------------------------------------------
-
-namespace cofiber {
-	template<typename T>
-	struct coroutine_traits<async::result<T>> {
-		struct promise_type : private async::awaitable<T> {
-			promise_type() { }
-
-		private:
-			void submit() override {
-				auto handle = coroutine_handle<promise_type>::from_promise(*this);
-				handle.resume();
-			}
-
-			void dispose() override {
-				auto handle = coroutine_handle<promise_type>::from_promise(*this);
-				handle.destroy();
-			}
-
-		public:
-			async::result<T> get_return_object(coroutine_handle<>) {
-				return async::result<T>{this};
-			}
-
-			auto initial_suspend() { return suspend_always{}; }
-
-			auto final_suspend() {
-				struct awaiter {
-					awaiter(promise_type *p)
-					: _p{p} { }
-
-					bool await_ready() {
-						return false;
-					}
-
-					void await_suspend(cofiber::coroutine_handle<>) {
-						_p->set_ready();
-					}
-
-					void await_resume() {
-						std::cerr << "libasync: Internal fatal error:"
-								" Coroutine resumed from final suspension point." << std::endl;
-						std::terminate();
-					}
-
-				private:
-					promise_type *_p;
-				};
-
-				return awaiter{this};
-			}
-
-			template<typename... V>
-			void return_value(V &&... value) {
-				async::awaitable<T>::emplace_value(std::forward<V>(value)...);
-			}
-		};
-	};
-}
-
-namespace async {
-
 // TODO: Support non-void results.
 template<typename A>
-COFIBER_ROUTINE(async::result<void>, make_result(A awaitable),
-		([aw = std::move(awaitable)] () mutable {
-	COFIBER_AWAIT std::move(aw);
-}));
+async::result<void> make_result(A awaitable) {
+	co_await std::forward<A>(awaitable);
+}
 
 } // namespace async
 
