@@ -261,6 +261,45 @@ struct resumption_on_current_queue {
 	};
 };
 
+struct yield_sender {
+	run_queue *q;
+};
+
+inline yield_sender yield_to_current_queue() {
+	auto q = get_current_queue();
+	assert(q && "yield_to_current_queue() outside of queue");
+	return yield_sender{q};
+}
+
+template<typename Receiver>
+struct yield_operation {
+	yield_operation(yield_sender s, Receiver r)
+	: q_{s.q}, r_{std::move(r)} {
+		_rqi.arm([this] {
+			r_.set_value();
+		});
+	}
+
+	void start() {
+		q_->post(&_rqi);
+	}
+
+private:
+	run_queue *q_;
+	Receiver r_;
+	run_queue_item _rqi;
+};
+
+template<typename Receiver>
+yield_operation<Receiver> connect(yield_sender s, Receiver r) {
+	return {s, std::move(r)};
+}
+
+inline async::sender_awaiter<yield_sender, void>
+operator co_await(yield_sender s) {
+	return {s};
+};
+
 // ----------------------------------------------------------------------------
 // Detached coroutines.
 // ----------------------------------------------------------------------------
