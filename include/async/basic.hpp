@@ -4,9 +4,88 @@
 #include <mutex>
 #include <optional>
 
+#include <async/execution.hpp>
 #include <boost/intrusive/list.hpp>
+#include <frg/optional.hpp>
 
 namespace async {
+
+// ----------------------------------------------------------------------------
+// sender_awaiter template.
+// ----------------------------------------------------------------------------
+
+template<typename S, typename T = void>
+struct [[nodiscard]] sender_awaiter {
+private:
+	struct receiver {
+		void set_value(T result) {
+			p_->result_ = std::move(result);
+			p_->h_.resume();
+		}
+
+		sender_awaiter *p_;
+	};
+
+public:
+	sender_awaiter(S sender)
+	: operation_{execution::connect(std::move(sender), receiver{this})} {
+	}
+
+	bool await_ready() {
+		return false;
+	}
+
+	void await_suspend(std::experimental::coroutine_handle<> h) {
+		h_ = h;
+		execution::start(operation_);
+	}
+
+	T await_resume() {
+		return std::move(*result_);
+	}
+
+	execution::operation_t<S, receiver> operation_;
+	std::experimental::coroutine_handle<> h_;
+	frg::optional<T> result_;
+};
+
+// Specialization of sender_awaiter for void return types.
+template<typename S>
+struct [[nodiscard]] sender_awaiter<S, void> {
+private:
+	struct receiver {
+		void set_value() {
+			p_->h_.resume();
+		}
+
+		sender_awaiter *p_;
+	};
+
+public:
+	sender_awaiter(S sender)
+	: operation_{execution::connect(std::move(sender), receiver{this})} {
+	}
+
+	bool await_ready() {
+		return false;
+	}
+
+	void await_suspend(std::experimental::coroutine_handle<> h) {
+		h_ = h;
+		operation_.start();
+	}
+
+	void await_resume() {
+		// Do nothing.
+	}
+
+	execution::operation_t<S, receiver> operation_;
+	std::experimental::coroutine_handle<> h_;
+};
+
+// ----------------------------------------------------------------------------
+// Legacy utilities.
+// ----------------------------------------------------------------------------
 
 template<typename S>
 struct callback;
