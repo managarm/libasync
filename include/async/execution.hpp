@@ -49,13 +49,13 @@ namespace cpo_types {
     };
 
 	template<typename Op>
-	using start_member_t = decltype(start(std::declval<Op>()));
+	using start_member_t = decltype(std::declval<Op>().start());
 
 	template<typename Op>
 	constexpr bool has_start_member_v = is_detected_v<start_member_t, Op>;
 
 	template<typename Op>
-	using global_start_t = decltype(std::declval<Op>().start());
+	using global_start_t = decltype(start(std::declval<Op>()));
 
 	template<typename Op>
 	constexpr bool has_global_start_v = is_detected_v<global_start_t, Op>;

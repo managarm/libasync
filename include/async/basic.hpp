@@ -72,7 +72,7 @@ public:
 
 	void await_suspend(std::experimental::coroutine_handle<> h) {
 		h_ = h;
-		operation_.start();
+		execution::start(operation_);
 	}
 
 	void await_resume() {
