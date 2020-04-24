@@ -260,72 +260,58 @@ namespace detail {
 }
 
 // ----------------------------------------------------------------------------
-// co_await support for result<T>.
+// Sender/receiver support for result<T>.
 // ----------------------------------------------------------------------------
 
 namespace detail {
-	template<typename T>
-	struct result_awaiter {
-		result_awaiter(result<T> res)
-		: _res{std::move(res)} { }
+	template<typename T, typename Receiver>
+	struct result_operation {
+		result_operation(result<T> res, Receiver rcv)
+		: res_{std::move(res)}, rcv_{std::move(rcv)} { }
 
-		result_awaiter(const result_awaiter &) = delete;
+		result_operation(const result_operation &) = delete;
 
-		result_awaiter &operator= (const result_awaiter &) = delete;
+		result_operation &operator= (const result_operation &) = delete;
 
-		bool await_ready() {
-			return _res.ready();
-		}
-
-		template<typename H>
-		void await_suspend(H handle) {
-			_address = handle.address();
-			_res.then([this] () {
-				H::from_address(_address).resume();
+		void start() {
+			res_.then([this] () {
+				rcv_.set_value(std::move(res_.value()));
 			});
 		}
 
-		T await_resume() {
-			assert(_res.ready());
-			return std::move(_res.value());
-		}
-
 	private:
-		result<T> _res;
-		void *_address;
+		result<T> res_;
+		Receiver rcv_;
 	};
 
-	template<>
-	struct result_awaiter<void> {
-		result_awaiter(result<void> res)
-		: _res{std::move(res)} { }
+	template<typename Receiver>
+	struct result_operation<void, Receiver> {
+		result_operation(result<void> res, Receiver rcv)
+		: res_{std::move(res)}, rcv_{std::move(rcv)} { }
 
-		result_awaiter(const result_awaiter &) = delete;
+		result_operation(const result_operation &) = delete;
 
-		result_awaiter &operator= (const result_awaiter &) = delete;
+		result_operation &operator= (const result_operation &) = delete;
 
-		bool await_ready() {
-			return _res.ready();
-		}
-
-		template<typename H>
-		void await_suspend(H handle) {
-			_address = handle.address();
-			_res.then([this] {
-				H::from_address(_address).resume();
+		void start() {
+			res_.then([this] {
+				rcv_.set_value();
 			});
 		}
 
-		void await_resume() { }
-
 	private:
-		result<void> _res;
-		void *_address;
+		result<void> res_;
+		Receiver rcv_;
 	};
 };
 
+template<typename T, typename Receiver>
+detail::result_operation<T, Receiver> connect(result<T> s, Receiver r) {
+	return {std::move(s), std::move(r)};
+}
+
 template<typename T>
-async::detail::result_awaiter<T> operator co_await(async::result<T> res) {
+sender_awaiter<result<T>, T> operator co_await(result<T> res) {
 	return {std::move(res)};
 };
 
