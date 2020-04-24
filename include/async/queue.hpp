@@ -12,7 +12,13 @@ namespace async {
 template<typename T>
 struct queue {
 	void put(T item) {
-		_queue.push(item);
+		_queue.push(std::move(item));
+		_doorbell.ring();
+	}
+
+	template<typename... Ts>
+	void emplace(Ts&&... arg) {
+		_queue.emplace(std::forward<Ts>(arg)...);
 		_doorbell.ring();
 	}
 
@@ -23,7 +29,7 @@ struct queue {
 		if (token.is_cancellation_requested())
 			co_return std::nullopt;
 
-		auto v = _queue.front();
+		auto v = std::move(_queue.front());
 		_queue.pop();
 
 		co_return v;
