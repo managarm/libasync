@@ -37,11 +37,11 @@ namespace cpo_types {
 
 	struct connect_cpo {
         template<typename Sender, typename Receiver>
-        auto operator() (Sender s, Receiver r) const {
+        auto operator() (Sender &&s, Receiver &&r) const {
             if constexpr (has_connect_member_v<Sender, Receiver>)
 				return s.connect(r);
             else if constexpr (has_global_connect_v<Sender, Receiver>)
-				return connect(std::move(s), std::move(r));
+				return connect(std::forward<Sender>(s), std::forward<Receiver>(r));
 			else
 				static_assert(dependent_false_t<Sender, Receiver>,
 						"No connect() customization defined for sender type");
@@ -62,11 +62,11 @@ namespace cpo_types {
 
 	struct start_cpo {
         template<typename Operation>
-        auto operator() (Operation op) const {
+        auto operator() (Operation &&op) const {
             if constexpr (has_start_member_v<Operation>)
 				return op.start();
             else if constexpr (has_global_start_v<Operation>)
-				return start(std::move(op));
+				return start(std::forward<Operation>(op));
 			else
 				static_assert(dependent_false_t<Operation>,
 						"No start() customization defined for operation type");
