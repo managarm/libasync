@@ -147,7 +147,6 @@ void run_forever(RunToken rt, IoService ios) {
 // run_queue implementation.
 // ----------------------------------------------------------------------------
 
-struct io_service;
 struct run_queue;
 
 run_queue *get_current_queue();
@@ -174,12 +173,6 @@ private:
 	boost::intrusive::list_member_hook<> _hook;
 };
 
-struct io_service {
-	virtual ~io_service() = default;
-
-	virtual void wait() = 0;
-};
-
 struct run_queue_token {
 	run_queue_token(run_queue *rq)
 	: rq_{rq} { }
@@ -195,20 +188,13 @@ struct run_queue {
 	friend struct current_queue_token;
 	friend struct run_queue_token;
 
-	run_queue(io_service *io_svc)
-	: _io_svc{io_svc} { }
-
 	run_queue_token run_token() {
 		return {this};
 	}
 
 	void post(run_queue_item *node);
 
-	void run();
-
 private:
-	io_service *_io_svc;
-
 	boost::intrusive::list<
 		run_queue_item,
 		boost::intrusive::member_hook<
@@ -245,20 +231,6 @@ inline void run_queue::post(run_queue_item *item) {
 	assert(item->_cb && "run_queue_item is posted with a null callback");
 
 	_run_list.push_back(*item);
-}
-
-inline void run_queue::run() {
-	queue_scope scope{this};
-
-	while(true) {
-		while(!_run_list.empty()) {
-			auto item = &_run_list.front();
-			_run_list.pop_front();
-			item->_cb();
-		}
-
-		_io_svc->wait();
-	}
 }
 
 // ----------------------------------------------------------------------------
