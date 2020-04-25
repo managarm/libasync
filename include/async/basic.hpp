@@ -1,6 +1,9 @@
 #ifndef LIBASYNC_BASIC_HPP
 #define LIBASYNC_BASIC_HPP
 
+#include <atomic>
+#include <experimental/coroutine>
+#include <iostream>
 #include <mutex>
 #include <optional>
 
@@ -127,6 +130,20 @@ private:
 };
 
 // ----------------------------------------------------------------------------
+// Top-level execution functions.
+// ----------------------------------------------------------------------------
+
+template<typename RunToken, typename IoService>
+void run_forever(RunToken rt, IoService ios) {
+	while(true) {
+		rt.run_iteration();
+		if(!rt.is_drained())
+			continue;
+		ios.wait();
+	}
+}
+
+// ----------------------------------------------------------------------------
 // run_queue implementation.
 // ----------------------------------------------------------------------------
 
@@ -137,6 +154,8 @@ run_queue *get_current_queue();
 
 struct run_queue_item {
 	friend struct run_queue;
+	friend struct current_queue_token;
+	friend struct run_queue_token;
 
 	run_queue_item() = default;
 
@@ -161,11 +180,28 @@ struct io_service {
 	virtual void wait() = 0;
 };
 
+struct run_queue_token {
+	run_queue_token(run_queue *rq)
+	: rq_{rq} { }
+
+	void run_iteration();
+	bool is_drained();
+
+private:
+	run_queue *rq_;
+};
+
 struct run_queue {
+	friend struct current_queue_token;
+	friend struct run_queue_token;
+
 	run_queue(io_service *io_svc)
 	: _io_svc{io_svc} { }
 
-public:
+	run_queue_token run_token() {
+		return {this};
+	}
+
 	void post(run_queue_item *node);
 
 	void run();
@@ -195,6 +231,13 @@ struct queue_scope {
 private:
 	run_queue *_queue;
 };
+
+struct current_queue_token {
+	void run_iteration();
+	bool is_drained();
+};
+
+inline constexpr current_queue_token current_queue;
 
 inline void run_queue::post(run_queue_item *item) {
 	// TODO: Implement cross-queue posting.
@@ -236,6 +279,41 @@ inline queue_scope::queue_scope(run_queue *queue)
 inline queue_scope::~queue_scope() {
 	assert(_thread_current_queue == _queue);
 	_thread_current_queue = nullptr;
+}
+
+// ----------------------------------------------------------------------------
+// queue_token implementation.
+// ----------------------------------------------------------------------------
+
+inline bool run_queue_token::is_drained() {
+	return rq_->_run_list.empty();
+}
+
+inline void run_queue_token::run_iteration() {
+	queue_scope rqs{rq_};
+
+	while(!rq_->_run_list.empty()) {
+		auto item = &rq_->_run_list.front();
+		rq_->_run_list.pop_front();
+		item->_cb();
+	}
+}
+
+inline bool current_queue_token::is_drained() {
+	auto rq = get_current_queue();
+	assert(rq && "current_queue_token is used outside of queue");
+	return rq->_run_list.empty();
+}
+
+inline void current_queue_token::run_iteration() {
+	auto rq = get_current_queue();
+	assert(rq && "current_queue_token is used outside of queue");
+
+	while(!rq->_run_list.empty()) {
+		auto item = &rq->_run_list.front();
+		rq->_run_list.pop_front();
+		item->_cb();
+	}
 }
 
 // ----------------------------------------------------------------------------
