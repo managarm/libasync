@@ -1,5 +1,4 @@
-#ifndef LIBASYNC_CANCELLATION_HPP
-#define LIBASYNC_CANCELLATION_HPP
+#pragma once
 
 #include <boost/intrusive/list.hpp>
 #include <mutex>
@@ -20,6 +19,9 @@ struct cancellation_event {
 
 	template<typename F>
 	friend struct cancellation_callback;
+
+	template<typename F>
+	friend struct cancellation_observer;
 
 	cancellation_event()
 	: _was_requested{false} { };
@@ -57,6 +59,9 @@ private:
 struct cancellation_token {
 	template<typename F>
 	friend struct cancellation_callback;
+
+	template<typename F>
+	friend struct cancellation_observer;
 
 	cancellation_token()
 	: _event{nullptr} { }
@@ -124,6 +129,63 @@ private:
 	F _functor;
 };
 
+template<typename F>
+struct cancellation_observer : abstract_cancellation_callback {
+	cancellation_observer(F functor = F{})
+	: _event{nullptr}, _functor{std::move(functor)} {
+	}
+
+	cancellation_observer(const cancellation_observer &) = delete;
+	cancellation_observer(cancellation_observer &&) = delete;
+
+	// TODO: we could do some sanity checking of the state in the destructor.
+	~cancellation_observer() = default;
+
+	cancellation_observer &operator= (const cancellation_observer &) = delete;
+	cancellation_observer &operator= (cancellation_observer &&) = delete;
+
+	bool try_set(cancellation_token token) {
+		assert(!_event);
+		if(!token._event)
+			return true;
+		_event = token._event;
+
+		std::lock_guard guard{_event->_mutex};
+		if(!_event->_was_requested) {
+			_event->_cbs.push_back(*this);
+			return true;
+		}
+		return false;
+	}
+
+	// TODO: provide a set() method that calls the handler inline if cancellation is requested.
+
+	bool try_reset() {
+		if(!_event)
+			return true;
+
+		std::lock_guard guard{_event->_mutex};
+		if(!_event->_was_requested) {
+			auto it = _event->_cbs.iterator_to(*this);
+			_event->_cbs.erase(it);
+			return true;
+		}
+		return false;
+	}
+
+	// TODO: provide a reset() method that waits until the cancellation handler completed.
+	//       This can be done by spinning on an atomic variable in cancellation_event
+	//       that determines whether handlers are currently running.
+
+private:
+	void call() override {
+		_functor();
+	}
+
+	cancellation_event *_event;
+	F _functor;
+};
+
 inline void cancellation_event::cancel() {
 	std::lock_guard guard{_mutex};
 	_was_requested = true;
@@ -144,7 +206,7 @@ namespace async {
 using detail::cancellation_event;
 using detail::cancellation_token;
 using detail::cancellation_callback;
+using detail::cancellation_observer;
 
 } // namespace async
 
-#endif // LIBASYNC_CANCELLATION_HPP
