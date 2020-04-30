@@ -3,6 +3,8 @@
 #include <boost/intrusive/list.hpp>
 #include <mutex>
 
+#include "basic.hpp"
+
 namespace async::detail {
 
 struct abstract_cancellation_callback {
@@ -208,5 +210,52 @@ using detail::cancellation_token;
 using detail::cancellation_callback;
 using detail::cancellation_observer;
 
-} // namespace async
+template<typename Receiver>
+struct suspend_indefinitely_operation {
+private:
+	struct functor {
+		functor(suspend_indefinitely_operation *op)
+		: op_{op} { }
 
+		void operator() () {
+			op_->r_.set_value();
+		}
+
+	private:
+		suspend_indefinitely_operation *op_;
+	};
+
+public:
+	suspend_indefinitely_operation(cancellation_token cancellation, Receiver r)
+	: cancellation_{cancellation}, r_{r}, obs_{this} { }
+
+	void start() {
+		if(!obs_.try_set(cancellation_))
+			r_.set_value();
+	}
+
+private:
+	cancellation_token cancellation_;
+	Receiver r_;
+	cancellation_observer<functor> obs_;
+	bool started_ = false;
+};
+
+struct suspend_indefinitely_sender {
+	cancellation_token cancellation;
+};
+
+template<typename Receiver>
+suspend_indefinitely_operation<Receiver> connect(suspend_indefinitely_sender s, Receiver r) {
+	return {s.cancellation, std::move(r)};
+}
+
+inline sender_awaiter<suspend_indefinitely_sender> operator co_await(suspend_indefinitely_sender s) {
+	return {s};
+}
+
+inline suspend_indefinitely_sender suspend_indefinitely(cancellation_token cancellation) {
+	return {cancellation};
+}
+
+} // namespace async
