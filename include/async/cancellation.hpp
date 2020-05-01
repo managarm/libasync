@@ -1,8 +1,8 @@
 #pragma once
 
-#include <boost/intrusive/list.hpp>
 #include <mutex>
 
+#include <frg/list.hpp>
 #include "basic.hpp"
 
 namespace async::detail {
@@ -13,7 +13,7 @@ struct abstract_cancellation_callback {
 private:
 	virtual void call() = 0;
 
-	boost::intrusive::list_member_hook<> _hook;
+	frg::default_list_hook<abstract_cancellation_callback> _hook;
 };
 
 struct cancellation_event {
@@ -48,11 +48,11 @@ private:
 
 	bool _was_requested;
 
-	boost::intrusive::list<
+	frg::intrusive_list<
 		abstract_cancellation_callback,
-		boost::intrusive::member_hook<
+		frg::locate_member<
 			abstract_cancellation_callback,
-			boost::intrusive::list_member_hook<>,
+			frg::default_list_hook<abstract_cancellation_callback>,
 			&abstract_cancellation_callback::_hook
 		>
 	> _cbs;
@@ -92,7 +92,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 		if(_event->_was_requested) {
 			_functor();
 		}else{
-			_event->_cbs.push_back(*this);
+			_event->_cbs.push_back(this);
 		}
 	}
 
@@ -104,7 +104,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 			return;
 		std::lock_guard guard{_event->_mutex};
 		if(!_event->_was_requested) {
-			auto it = _event->_cbs.iterator_to(*this);
+			auto it = _event->_cbs.iterator_to(this);
 			_event->_cbs.erase(it);
 		}
 	}
@@ -117,7 +117,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 			return;
 		std::lock_guard guard{_event->_mutex};
 		if(!_event->_was_requested) {
-			auto it = _event->_cbs.iterator_to(*this);
+			auto it = _event->_cbs.iterator_to(this);
 			_event->_cbs.erase(it);
 		}
 	}
@@ -154,7 +154,7 @@ struct cancellation_observer : abstract_cancellation_callback {
 
 		std::lock_guard guard{_event->_mutex};
 		if(!_event->_was_requested) {
-			_event->_cbs.push_back(*this);
+			_event->_cbs.push_back(this);
 			return true;
 		}
 		return false;
@@ -168,7 +168,7 @@ struct cancellation_observer : abstract_cancellation_callback {
 
 		std::lock_guard guard{_event->_mutex};
 		if(!_event->_was_requested) {
-			auto it = _event->_cbs.iterator_to(*this);
+			auto it = _event->_cbs.iterator_to(this);
 			_event->_cbs.erase(it);
 			return true;
 		}
@@ -191,8 +191,8 @@ private:
 inline void cancellation_event::cancel() {
 	std::lock_guard guard{_mutex};
 	_was_requested = true;
-	for(abstract_cancellation_callback &cb : _cbs)
-		cb.call();
+	for(abstract_cancellation_callback *cb : _cbs)
+		cb->call();
 	_cbs.clear();
 }
 
