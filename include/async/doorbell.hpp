@@ -3,7 +3,7 @@
 
 #include <async/result.hpp>
 #include <async/cancellation.hpp>
-#include <boost/intrusive/list.hpp>
+#include <frg/list.hpp>
 
 namespace async {
 
@@ -16,8 +16,7 @@ namespace detail {
 			done
 		};
 
-		struct node : awaitable<void>,
-				boost::intrusive::list_base_hook<> {
+		struct node : awaitable<void> {
 			friend struct doorbell;
 
 			using awaitable<void>::set_ready;
@@ -38,7 +37,7 @@ namespace detail {
 				}
 				assert(_state == state::null);
 				_state = state::queued;
-				_owner->_queue.push_back(*this);
+				_owner->_queue.push_back(this);
 			}
 
 			void dispose() override {
@@ -59,26 +58,33 @@ namespace detail {
 
 			// This field is protected by the _mutex.
 			state _state;
-
+			frg::default_list_hook<node> _hook;
 			cancellation_callback<cancel_handler> _cancel_cb;
 		};
 
 		void ring() {
 			// Grab all items and mark them as retired while we hold the lock.
-			boost::intrusive::list<node> items;
+			frg::intrusive_list<
+				node,
+				frg::locate_member<
+					node,
+					frg::default_list_hook<node>,
+					&node::_hook
+				>
+			> items;
 			{
 				std::lock_guard<std::mutex> lock(_mutex);
 
 				items.splice(items.end(), _queue);
-				for(auto &ref : items) {
-					assert(ref._state == state::queued);
-					ref._state = state::done;
+				for(auto item : items) {
+					assert(item->_state == state::queued);
+					item->_state = state::done;
 				}
 			}
 
 			// Now invoke the individual callbacks.
 			while(!items.empty()) {
-				auto item = &items.front();
+				auto item = items.front();
 				items.pop_front();
 				item->set_ready();
 			}
@@ -102,7 +108,7 @@ namespace detail {
 					return;
 
 				if(item->_state == state::queued) {
-					auto it = boost::intrusive::list<node>::s_iterator_to(*item);
+					auto it = _queue.iterator_to(item);
 					_queue.erase(it);
 					became_ready = true;
 				}else
@@ -116,7 +122,14 @@ namespace detail {
 
 	private:
 		std::mutex _mutex;
-		boost::intrusive::list<node> _queue;
+		frg::intrusive_list<
+			node,
+			frg::locate_member<
+				node,
+				frg::default_list_hook<node>,
+				&node::_hook
+			>
+		> _queue;
 	};
 }
 
