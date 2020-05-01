@@ -6,12 +6,12 @@
 
 #include <async/result.hpp>
 #include <async/doorbell.hpp>
-#include <boost/intrusive/list.hpp>
+#include <frg/list.hpp>
 
 namespace async {
 
 struct jump {
-	struct awaiter : boost::intrusive::list_base_hook<> {
+	struct awaiter {
 		friend struct jump;
 
 	private:
@@ -35,7 +35,7 @@ struct jump {
 				std::lock_guard<std::mutex> lock(_owner->_mutex);
 				done = _owner->_done;
 				if(!done)
-					_owner->_waiters.push_back(*this);
+					_owner->_waiters.push_back(this);
 			}
 
 			if(done)
@@ -48,6 +48,7 @@ struct jump {
 
 	private:
 		jump *_owner;
+		frg::default_list_hook<awaiter> _hook;
 		callback<void()> _cb;
 	};
 
@@ -55,7 +56,14 @@ struct jump {
 	: _done(false) { }
 
 	void trigger() {
-		boost::intrusive::list<awaiter> items;
+		frg::intrusive_list<
+			awaiter,
+			frg::locate_member<
+				awaiter,
+				frg::default_list_hook<awaiter>,
+				&awaiter::_hook
+			>
+		> items;
 		{
 			std::lock_guard<std::mutex> lock(_mutex);
 			_done = true;
@@ -64,7 +72,7 @@ struct jump {
 
 		// Invoke the callbacks without holding locks.
 		while(!items.empty()) {
-			auto item = &items.front();
+			auto item = items.front();
 			items.pop_front();
 			item->_cb();
 		}
@@ -85,7 +93,14 @@ struct jump {
 private:
 	std::mutex _mutex;
 	bool _done;
-	boost::intrusive::list<awaiter> _waiters;
+	frg::intrusive_list<
+		awaiter,
+		frg::locate_member<
+			awaiter,
+			frg::default_list_hook<awaiter>,
+			&awaiter::_hook
+		>
+	> _waiters;
 };
 
 } // namespace async
