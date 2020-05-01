@@ -3,13 +3,27 @@
 
 #include <atomic>
 #include <experimental/coroutine>
-#include <iostream>
-#include <mutex>
-#include <optional>
 
 #include <async/execution.hpp>
 #include <frg/list.hpp>
 #include <frg/optional.hpp>
+#include <frg/mutex.hpp>
+
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+#include <mutex>
+#include <iostream>
+#include <cassert>
+namespace async::platform {
+	using mutex = std::mutex;
+
+	[[noreturn]] inline void panic(const char *str) {
+		std::cerr << str << std::endl;
+		std::terminate();
+	}
+} // namespace async::platform
+#else
+#include <async/platform.hpp>
+#endif
 
 namespace async {
 
@@ -392,9 +406,8 @@ struct detached {
 			}
 
 			void await_resume() {
-				std::cerr << "libasync: Internal fatal error:"
-						" Coroutine resumed from final suspension point" << std::endl;
-				std::terminate();
+				platform::panic("libasync: Internal fatal error:"
+						" Coroutine resumed from final suspension point");
 			}
 
 		private:
@@ -419,8 +432,7 @@ struct detached {
 		}
 
 		void unhandled_exception() {
-			std::cerr << "libasync: Unhandled exception in coroutine" << std::endl;
-			std::terminate();
+			platform::panic("libasync: Unhandled exception in coroutine");
 		}
 	};
 };
@@ -522,7 +534,7 @@ protected:
 	}
 
 private:
-	std::optional<T> _val;
+	frg::optional<T> _val;
 };
 
 template<>

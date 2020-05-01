@@ -1,7 +1,5 @@
 #pragma once
 
-#include <mutex>
-
 #include <frg/list.hpp>
 #include "basic.hpp"
 
@@ -44,7 +42,7 @@ struct cancellation_event {
 	void reset();
 
 private:
-	std::mutex _mutex;
+	platform::mutex _mutex;
 
 	bool _was_requested;
 
@@ -74,7 +72,7 @@ struct cancellation_token {
 	bool is_cancellation_requested() const {
 		if(!_event)
 			return false;
-		std::lock_guard guard{_event->_mutex};
+		frg::unique_lock guard{_event->_mutex};
 		return _event->_was_requested;
 	}
 
@@ -88,7 +86,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 	: _event{token._event}, _functor{std::move(functor)} {
 		if(!_event)
 			return;
-		std::lock_guard guard{_event->_mutex};
+		frg::unique_lock guard{_event->_mutex};
 		if(_event->_was_requested) {
 			_functor();
 		}else{
@@ -102,7 +100,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 	~cancellation_callback() {
 		if(!_event)
 			return;
-		std::lock_guard guard{_event->_mutex};
+		frg::unique_lock guard{_event->_mutex};
 		if(!_event->_was_requested) {
 			auto it = _event->_cbs.iterator_to(this);
 			_event->_cbs.erase(it);
@@ -115,7 +113,7 @@ struct cancellation_callback : abstract_cancellation_callback {
 	void unbind() {
 		if(!_event)
 			return;
-		std::lock_guard guard{_event->_mutex};
+		frg::unique_lock guard{_event->_mutex};
 		if(!_event->_was_requested) {
 			auto it = _event->_cbs.iterator_to(this);
 			_event->_cbs.erase(it);
@@ -152,7 +150,7 @@ struct cancellation_observer : abstract_cancellation_callback {
 			return true;
 		_event = token._event;
 
-		std::lock_guard guard{_event->_mutex};
+		frg::unique_lock guard{_event->_mutex};
 		if(!_event->_was_requested) {
 			_event->_cbs.push_back(this);
 			return true;
@@ -166,7 +164,7 @@ struct cancellation_observer : abstract_cancellation_callback {
 		if(!_event)
 			return true;
 
-		std::lock_guard guard{_event->_mutex};
+		frg::unique_lock guard{_event->_mutex};
 		if(!_event->_was_requested) {
 			auto it = _event->_cbs.iterator_to(this);
 			_event->_cbs.erase(it);
@@ -189,7 +187,7 @@ private:
 };
 
 inline void cancellation_event::cancel() {
-	std::lock_guard guard{_mutex};
+	frg::unique_lock guard{_mutex};
 	_was_requested = true;
 	for(abstract_cancellation_callback *cb : _cbs)
 		cb->call();
@@ -197,7 +195,7 @@ inline void cancellation_event::cancel() {
 }
 
 inline void cancellation_event::reset() {
-	std::lock_guard guard{_mutex};
+	frg::unique_lock guard{_mutex};
 	_was_requested = false;
 }
 

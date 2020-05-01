@@ -30,7 +30,7 @@ namespace detail {
 			node &operator= (const node &) = delete;
 
 			void submit() override {
-				std::lock_guard<std::mutex> lock(_owner->_mutex);
+				frg::unique_lock lock(_owner->_mutex);
 				if(_state == state::cancelled) {
 					set_ready();
 					return;
@@ -73,7 +73,7 @@ namespace detail {
 				>
 			> items;
 			{
-				std::lock_guard<std::mutex> lock(_mutex);
+				frg::unique_lock lock(_mutex);
 
 				items.splice(items.end(), _queue);
 				for(auto item : items) {
@@ -102,7 +102,7 @@ namespace detail {
 		void cancel_async_wait(node *item) {
 			bool became_ready = false;
 			{
-				std::lock_guard<std::mutex> lock(_mutex);
+				frg::unique_lock lock(_mutex);
 				
 				if(item->_state == state::done)
 					return;
@@ -121,7 +121,7 @@ namespace detail {
 		}
 
 	private:
-		std::mutex _mutex;
+		platform::mutex _mutex;
 		frg::intrusive_list<
 			node,
 			frg::locate_member<

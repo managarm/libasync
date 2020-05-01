@@ -1,7 +1,6 @@
 #ifndef ASYNC_JUMP_HPP
 #define ASYNC_JUMP_HPP
 
-#include <mutex>
 #include <deque>
 
 #include <async/result.hpp>
@@ -32,7 +31,7 @@ struct jump {
 
 			bool done;
 			{
-				std::lock_guard<std::mutex> lock(_owner->_mutex);
+				frg::unique_lock lock(_owner->_mutex);
 				done = _owner->_done;
 				if(!done)
 					_owner->_waiters.push_back(this);
@@ -65,7 +64,7 @@ struct jump {
 			>
 		> items;
 		{
-			std::lock_guard<std::mutex> lock(_mutex);
+			frg::unique_lock lock(_mutex);
 			_done = true;
 			items.splice(items.end(), _waiters);
 		}
@@ -86,12 +85,12 @@ struct jump {
 	void reset() {
 		// TODO: We do not need the lock for exclusion.
 		// Do we need it for the memory barrier?
-		std::lock_guard<std::mutex> lock(_mutex);
+		frg::unique_lock lock(_mutex);
 		_done = false;
 	}
 
 private:
-	std::mutex _mutex;
+	platform::mutex _mutex;
 	bool _done;
 	frg::intrusive_list<
 		awaiter,

@@ -177,9 +177,8 @@ namespace detail {
 				}
 
 				void await_resume() {
-					std::cerr << "libasync: Internal fatal error:"
-							" Coroutine resumed from final suspension point" << std::endl;
-					std::terminate();
+					platform::panic("libasync: Internal fatal error:"
+							" Coroutine resumed from final suspension point");
 				}
 
 			private:
@@ -195,8 +194,7 @@ namespace detail {
 		}
 
 		void unhandled_exception() {
-			std::cerr << "libasync: Unhandled exception in coroutine" << std::endl;
-			std::terminate();
+			platform::panic("libasync: Unhandled exception in coroutine");
 		}
 	};
 
@@ -236,9 +234,8 @@ namespace detail {
 				}
 
 				void await_resume() {
-					std::cerr << "libasync: Internal fatal error:"
-							" Coroutine resumed from final suspension point" << std::endl;
-					std::terminate();
+					platform::panic("libasync: Internal fatal error:"
+							" Coroutine resumed from final suspension point");
 				}
 
 			private:
@@ -253,8 +250,7 @@ namespace detail {
 		}
 
 		void unhandled_exception() {
-			std::cerr << "libasync: Unhandled exception in coroutine" << std::endl;
-			std::terminate();
+			platform::panic("libasync: Unhandled exception in coroutine");
 		}
 	};
 }
@@ -479,7 +475,8 @@ namespace detail {
 		}
 
 		void dispose() override {
-			std::cout << "libasync: Handle dispose() for pledge" << std::endl;
+			// TODO
+			//std::cout << "libasync: Handle dispose() for pledge" << std::endl;
 		}
 
 		result<T> async_get() {

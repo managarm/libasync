@@ -19,7 +19,7 @@ namespace detail {
 			node &operator= (const node &) = delete;
 
 			void submit() override {
-				std::lock_guard<std::mutex> lock(_owner->_mutex);
+				frg::unique_lock lock(_owner->_mutex);
 
 				if(_owner->_locked) {
 					_owner->_waiters.push_back(this);
@@ -46,7 +46,7 @@ namespace detail {
 		}
 
 		void unlock() {
-			std::lock_guard<std::mutex> lock(_mutex);
+			frg::unique_lock lock(_mutex);
 			assert(_locked);
 
 			if(_waiters.empty()) {
@@ -59,7 +59,7 @@ namespace detail {
 		}
 
 	private:
-		std::mutex _mutex;
+		platform::mutex _mutex;
 		bool _locked;
 		// TODO: Make this list intrusive.
 		std::deque<node *> _waiters;
