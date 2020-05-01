@@ -8,7 +8,7 @@
 #include <optional>
 
 #include <async/execution.hpp>
-#include <boost/intrusive/list.hpp>
+#include <frg/list.hpp>
 #include <frg/optional.hpp>
 
 namespace async {
@@ -170,7 +170,7 @@ struct run_queue_item {
 
 private:
 	callback<void()> _cb;
-	boost::intrusive::list_member_hook<> _hook;
+	frg::default_list_hook<run_queue_item> _hook;
 };
 
 struct run_queue_token {
@@ -195,11 +195,11 @@ struct run_queue {
 	void post(run_queue_item *node);
 
 private:
-	boost::intrusive::list<
+	frg::intrusive_list<
 		run_queue_item,
-		boost::intrusive::member_hook<
+		frg::locate_member<
 			run_queue_item,
-			boost::intrusive::list_member_hook<>,
+			frg::default_list_hook<run_queue_item>,
 			&run_queue_item::_hook
 		>
 	> _run_list;
@@ -230,7 +230,7 @@ inline void run_queue::post(run_queue_item *item) {
 	assert(get_current_queue() == this);
 	assert(item->_cb && "run_queue_item is posted with a null callback");
 
-	_run_list.push_back(*item);
+	_run_list.push_back(item);
 }
 
 // ----------------------------------------------------------------------------
@@ -265,7 +265,7 @@ inline void run_queue_token::run_iteration() {
 	queue_scope rqs{rq_};
 
 	while(!rq_->_run_list.empty()) {
-		auto item = &rq_->_run_list.front();
+		auto item = rq_->_run_list.front();
 		rq_->_run_list.pop_front();
 		item->_cb();
 	}
@@ -282,7 +282,7 @@ inline void current_queue_token::run_iteration() {
 	assert(rq && "current_queue_token is used outside of queue");
 
 	while(!rq->_run_list.empty()) {
-		auto item = &rq->_run_list.front();
+		auto item = rq->_run_list.front();
 		rq->_run_list.pop_front();
 		item->_cb();
 	}
