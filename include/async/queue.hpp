@@ -98,7 +98,7 @@ public:
 			return {s.q, s.ct, std::move(r)};
 		}
 
-		friend sender_awaiter<get_sender, T> operator co_await (get_sender s) {
+		friend sender_awaiter<get_sender, frg::optional<T>> operator co_await (get_sender s) {
 			return {s};
 		}
 
