@@ -84,6 +84,8 @@ private:
 public:
 	using detail::result_base<T>::get_awaitable;
 
+	using value_type = T;
+
 	using promise_type = detail::result_promise<T>;
 
 	result() = default;
@@ -117,6 +119,8 @@ private:
 
 public:
 	using detail::result_base<void>::get_awaitable;
+
+	using value_type = void;
 
 	using promise_type = detail::result_promise<void>;
 
