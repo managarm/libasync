@@ -8,6 +8,9 @@ namespace async::detail {
 struct abstract_cancellation_callback {
 	friend struct cancellation_event;
 
+protected:
+	~abstract_cancellation_callback() = default;
+
 private:
 	virtual void call() = 0;
 
@@ -81,7 +84,7 @@ private:
 };
 
 template<typename F>
-struct cancellation_callback : abstract_cancellation_callback {
+struct cancellation_callback final : private abstract_cancellation_callback {
 	cancellation_callback(cancellation_token token, F functor)
 	: _event{token._event}, _functor{std::move(functor)} {
 		if(!_event)
@@ -130,7 +133,7 @@ private:
 };
 
 template<typename F>
-struct cancellation_observer : abstract_cancellation_callback {
+struct cancellation_observer final : private abstract_cancellation_callback {
 	cancellation_observer(F functor = F{})
 	: _event{nullptr}, _functor{std::move(functor)} {
 	}
