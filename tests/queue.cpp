@@ -26,3 +26,14 @@ TEST(Queue, PutGet) {
 	ASSERT_EQ(v1, 42);
 	ASSERT_EQ(v2, 21);
 }
+
+TEST(Queue, Cancel) {
+	async::run_queue rq;
+	async::queue_scope qs{&rq};
+
+	async::cancellation_event ce;
+	async::queue<int, stl_allocator> q;
+	ce.cancel();
+	auto v1 = async::run(q.async_get(ce), async::current_queue);
+	ASSERT_FALSE(v1);
+}
