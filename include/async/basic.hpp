@@ -219,6 +219,70 @@ private:
 	> _run_list;
 };
 
+template<typename Sender, typename RunToken>
+std::enable_if_t<std::is_same_v<typename Sender::value_type, void>, void>
+run(Sender s, RunToken rt) {
+	struct state {
+		bool done = false;
+	};
+
+	struct receiver {
+		receiver(state *stp)
+		: stp_{stp} { }
+
+		void set_value() {
+			stp_->done = true;
+		}
+
+	private:
+		state *stp_;
+	};
+
+	state st;
+
+	auto operation = execution::connect(std::move(s), receiver{&st});
+	execution::start(operation);
+
+	while(!st.done) {
+		assert(!rt.is_drained());
+		rt.run_iteration();
+	}
+}
+
+template<typename Sender, typename RunToken>
+std::enable_if_t<!std::is_same_v<typename Sender::value_type, void>,
+		typename Sender::value_type>
+run(Sender s, RunToken rt) {
+	struct state {
+		bool done = false;
+		frg::optional<typename Sender::value_type> value;
+	};
+
+	struct receiver {
+		receiver(state *stp)
+		: stp_{stp} { }
+
+		void set_value(typename Sender::value_type value) {
+			stp_->value.emplace(std::move(value));
+			stp_->done = true;
+		}
+
+	private:
+		state *stp_;
+	};
+
+	state st;
+
+	auto operation = execution::connect(std::move(s), receiver{&st});
+	execution::start(operation);
+
+	while(!st.done) {
+		assert(!rt.is_drained());
+		rt.run_iteration();
+	}
+	return std::move(*st.value);
+}
+
 struct queue_scope {
 	queue_scope(run_queue *queue);
 
