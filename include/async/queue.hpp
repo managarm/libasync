@@ -4,40 +4,39 @@
 #include <async/result.hpp>
 #include <async/doorbell.hpp>
 #include <async/cancellation.hpp>
-#include <queue>
-#include <optional>
+#include <frg/list.hpp>
+#include <frg/optional.hpp>
 
 namespace async {
 
-template<typename T>
+template<typename T, typename Allocator>
 struct queue {
 	void put(T item) {
-		_queue.push(std::move(item));
-		_doorbell.ring();
+		emplace(std::move(item));
 	}
 
 	template<typename... Ts>
 	void emplace(Ts&&... arg) {
-		_queue.emplace(std::forward<Ts>(arg)...);
+		_queue.emplace_back(std::forward<Ts>(arg)...);
 		_doorbell.ring();
 	}
 
-	async::result<std::optional<T>> async_get(async::cancellation_token token = {}) {
+	async::result<frg::optional<T>> async_get(async::cancellation_token token = {}) {
 		while (_queue.empty() && !token.is_cancellation_requested())
 			co_await _doorbell.async_wait(token);
 
 		if (token.is_cancellation_requested())
-			co_return std::nullopt;
+			co_return frg::null_opt;
 
 		auto v = std::move(_queue.front());
-		_queue.pop();
+		_queue.pop_front();
 
 		co_return v;
 	}
 
 private:
 	doorbell _doorbell;
-	std::queue<T> _queue;
+	frg::list<T, Allocator> _queue;
 };
 
 }
