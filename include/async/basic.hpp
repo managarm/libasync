@@ -13,6 +13,7 @@
 #include <mutex>
 #include <iostream>
 #include <cassert>
+#define LIBASYNC_THREAD_LOCAL thread_local
 namespace async::platform {
 	using mutex = std::mutex;
 
@@ -315,7 +316,7 @@ inline void run_queue::post(run_queue_item *item) {
 // queue_scope implementation.
 // ----------------------------------------------------------------------------
 
-inline thread_local run_queue *_thread_current_queue{nullptr};
+inline LIBASYNC_THREAD_LOCAL run_queue *_thread_current_queue{nullptr};
 
 inline run_queue *get_current_queue() {
 	return _thread_current_queue;
