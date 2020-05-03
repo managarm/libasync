@@ -47,6 +47,16 @@ namespace detail {
 			return result<void>{new node{this}};
 		}
 
+		bool try_lock() {
+			frg::unique_lock lock(_mutex);
+
+			if (_locked)
+				return false;
+
+			_locked = true;
+			return true;
+		}
+
 		void unlock() {
 			frg::unique_lock lock(_mutex);
 			assert(_locked);
