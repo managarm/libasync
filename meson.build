@@ -7,6 +7,7 @@ gtest_dep = dependency('gtest', main: true, required: false)
 gtest_binary = executable('gtests',
 	'tests/basic.cpp',
 	'tests/queue.cpp',
+	'tests/mutex.cpp',
 	include_directories: include_directories('include/'),
 	cpp_args: '-fcoroutines-ts',
 	dependencies: [
