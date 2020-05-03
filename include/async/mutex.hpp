@@ -1,7 +1,7 @@
 #ifndef ASYNC_MUTEX_HPP
 #define ASYNC_MUTEX_HPP
 
-#include <deque>
+#include <frg/list.hpp>
 #include <async/result.hpp>
 
 namespace async {
@@ -9,6 +9,7 @@ namespace async {
 namespace detail {
 	struct mutex {
 		struct node : awaitable<void> {
+			friend mutex;
 			using awaitable<void>::set_ready;
 
 			node(mutex *owner)
@@ -36,6 +37,7 @@ namespace detail {
 
 		private:
 			mutex *_owner;
+			frg::default_list_hook<node> _hook;
 		};
 
 		mutex()
@@ -52,8 +54,7 @@ namespace detail {
 			if(_waiters.empty()) {
 				_locked = false;
 			}else{
-				auto item = _waiters.front();
-				_waiters.pop_front();
+				auto item = _waiters.pop_front();
 				item->set_ready();
 			}
 		}
@@ -61,8 +62,14 @@ namespace detail {
 	private:
 		platform::mutex _mutex;
 		bool _locked;
-		// TODO: Make this list intrusive.
-		std::deque<node *> _waiters;
+		frg::intrusive_list<
+			node,
+			frg::locate_member<
+				node,
+				frg::default_list_hook<node>,
+				&node::_hook
+			>
+		> _waiters;
 	};
 }
 
