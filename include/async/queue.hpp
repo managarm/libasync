@@ -10,6 +10,9 @@ namespace async {
 
 template<typename T, typename Allocator>
 struct queue {
+	queue(Allocator allocator = {})
+	: buffer_{allocator} {}
+
 private:
 	struct sink {
 		friend struct queue;
