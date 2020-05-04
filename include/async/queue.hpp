@@ -55,7 +55,7 @@ public:
 		void start() {
 			if(!q_->buffer_.empty()) {
 				assert(q_->sinks_.empty());
-				auto object = q_->buffer_.front();
+				auto object = std::move(q_->buffer_.front());
 				q_->buffer_.pop_front();
 				r_.set_value(std::move(object));
 			}else{
