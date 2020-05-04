@@ -1,11 +1,8 @@
 #ifndef ASYNC_RESULT_HPP
 #define ASYNC_RESULT_HPP
 
-#include <assert.h>
 #include <atomic>
 #include <experimental/coroutine>
-#include <experimental/optional>
-#include <iostream>
 #include <type_traits>
 #include <utility>
 
