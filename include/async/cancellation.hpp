@@ -190,11 +190,26 @@ private:
 };
 
 inline void cancellation_event::cancel() {
-	frg::unique_lock guard{_mutex};
-	_was_requested = true;
-	for(abstract_cancellation_callback *cb : _cbs)
+	frg::intrusive_list<
+		abstract_cancellation_callback,
+		frg::locate_member<
+			abstract_cancellation_callback,
+			frg::default_list_hook<abstract_cancellation_callback>,
+			&abstract_cancellation_callback::_hook
+		>
+	> pending;
+
+	{
+		frg::unique_lock guard{_mutex};
+		_was_requested = true;
+		pending.splice(pending.begin(), _cbs);
+	}
+
+	while (!pending.empty()) {
+		auto cb = pending.front();
+		pending.pop_front();
 		cb->call();
-	_cbs.clear();
+	}
 }
 
 inline void cancellation_event::reset() {
