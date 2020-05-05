@@ -37,7 +37,7 @@ struct [[nodiscard]] sender_awaiter {
 private:
 	struct receiver {
 		void set_value(T result) {
-			p_->result_ = std::move(result);
+			p_->result_.emplace(std::move(result));
 			p_->h_.resume();
 		}
 
