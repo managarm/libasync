@@ -8,6 +8,7 @@ gtest_binary = executable('gtests',
 	'tests/basic.cpp',
 	'tests/queue.cpp',
 	'tests/mutex.cpp',
+	'tests/race.cpp',
 	include_directories: include_directories('include/'),
 	cpp_args: '-fcoroutines-ts',
 	dependencies: [
