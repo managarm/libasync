@@ -2,7 +2,6 @@
 #define ASYNC_RESULT_HPP
 
 #include <atomic>
-#include <experimental/coroutine>
 #include <type_traits>
 #include <utility>
 
@@ -148,12 +147,12 @@ namespace detail {
 
 	private:
 		void submit() override {
-			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			auto handle = corons::coroutine_handle<result_promise>::from_promise(*this);
 			handle.resume();
 		}
 
 		void dispose() override {
-			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			auto handle = corons::coroutine_handle<result_promise>::from_promise(*this);
 			handle.destroy();
 		}
 
@@ -162,7 +161,7 @@ namespace detail {
 			return async::result<T>{this};
 		}
 
-		auto initial_suspend() { return std::experimental::suspend_always{}; }
+		auto initial_suspend() { return corons::suspend_always{}; }
 
 		auto final_suspend() {
 			struct awaiter {
@@ -173,7 +172,7 @@ namespace detail {
 					return false;
 				}
 
-				void await_suspend(std::experimental::coroutine_handle<>) {
+				void await_suspend(corons::coroutine_handle<>) {
 					_p->set_ready();
 				}
 
@@ -205,12 +204,12 @@ namespace detail {
 
 	private:
 		void submit() override {
-			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			auto handle = corons::coroutine_handle<result_promise>::from_promise(*this);
 			handle.resume();
 		}
 
 		void dispose() override {
-			auto handle = std::experimental::coroutine_handle<result_promise>::from_promise(*this);
+			auto handle = corons::coroutine_handle<result_promise>::from_promise(*this);
 			handle.destroy();
 		}
 
@@ -219,7 +218,7 @@ namespace detail {
 			return async::result<void>{this};
 		}
 
-		auto initial_suspend() { return std::experimental::suspend_always{}; }
+		auto initial_suspend() { return corons::suspend_always{}; }
 
 		auto final_suspend() {
 			struct awaiter {
@@ -230,7 +229,7 @@ namespace detail {
 					return false;
 				}
 
-				void await_suspend(std::experimental::coroutine_handle<>) {
+				void await_suspend(corons::coroutine_handle<>) {
 					_p->set_ready();
 				}
 

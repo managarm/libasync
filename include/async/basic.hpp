@@ -2,7 +2,6 @@
 #define LIBASYNC_BASIC_HPP
 
 #include <atomic>
-#include <experimental/coroutine>
 
 #include <async/execution.hpp>
 #include <frg/list.hpp>
@@ -24,6 +23,14 @@ namespace async::platform {
 } // namespace async::platform
 #else
 #include <async/platform.hpp>
+#endif
+
+#if __has_include(<coroutine>)
+#include <coroutine>
+namespace corons = std;
+#else
+#include <experimental/coroutine>
+namespace corons = std::experimental;
 #endif
 
 namespace async {
@@ -53,7 +60,7 @@ public:
 		return false;
 	}
 
-	void await_suspend(std::experimental::coroutine_handle<> h) {
+	void await_suspend(corons::coroutine_handle<> h) {
 		h_ = h;
 		execution::start(operation_);
 	}
@@ -63,7 +70,7 @@ public:
 	}
 
 	execution::operation_t<S, receiver> operation_;
-	std::experimental::coroutine_handle<> h_;
+	corons::coroutine_handle<> h_;
 	frg::optional<T> result_;
 };
 
@@ -88,7 +95,7 @@ public:
 		return false;
 	}
 
-	void await_suspend(std::experimental::coroutine_handle<> h) {
+	void await_suspend(corons::coroutine_handle<> h) {
 		h_ = h;
 		execution::start(operation_);
 	}
@@ -98,7 +105,7 @@ public:
 	}
 
 	execution::operation_t<S, receiver> operation_;
-	std::experimental::coroutine_handle<> h_;
+	corons::coroutine_handle<> h_;
 };
 
 // ----------------------------------------------------------------------------
@@ -440,9 +447,9 @@ struct detached {
 				return false;
 			}
 
-			void await_suspend(std::experimental::coroutine_handle<> h) {
+			void await_suspend(corons::coroutine_handle<> h) {
 				_rt.arm(_rm, [address = h.address()] {
-					auto h = std::experimental::coroutine_handle<>::from_address(address);
+					auto h = corons::coroutine_handle<>::from_address(address);
 					h.resume();
 				});
 				_rt.post(_rm);
@@ -460,11 +467,11 @@ struct detached {
 				return false;
 			}
 
-			void await_suspend(std::experimental::coroutine_handle<> h) {
+			void await_suspend(corons::coroutine_handle<> h) {
 				// Calling h.destroy() here causes the code to break.
 				// TODO: Is this a LLVM bug? Workaround: Defer it to a run_queue.
 				_rt.arm(_rm, [address = h.address()] {
-					auto h = std::experimental::coroutine_handle<>::from_address(address);
+					auto h = corons::coroutine_handle<>::from_address(address);
 					h.destroy();
 				});
 				_rt.post(_rm);
