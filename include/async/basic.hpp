@@ -568,6 +568,52 @@ detached detach(A awaitable, Cont continuation) {
 	continuation();
 }
 
+namespace detach_details_ {
+	template<typename Allocator, typename S>
+	struct control_block;
+
+	template<typename Allocator, typename S>
+	void finalize(control_block<Allocator, S> *cb);
+
+	template<typename Allocator, typename S>
+	struct receiver {
+		receiver(control_block<Allocator, S> *cb)
+		: cb_{cb} { }
+
+		void set_value() {
+			finalize(cb_);
+		}
+
+	private:
+		control_block<Allocator, S> *cb_;
+	};
+
+	// Heap-allocate data structure that holds the operation.
+	// We cannot directly put the operation onto the heap as it is non-movable.
+	template<typename Allocator, typename S>
+	struct control_block {
+		friend void finalize(control_block<Allocator, S> *cb) {
+			auto allocator = std::move(cb->allocator);
+			frg::destruct(allocator, cb);
+		}
+
+		control_block(Allocator allocator, S sender)
+		: allocator{std::move(allocator)},
+				operation{execution::connect(std::move(sender), receiver<Allocator, S>{this})} { }
+
+		Allocator allocator;
+		execution::operation_t<S, receiver<Allocator, S>> operation;
+	};
+}
+
+// TODO: rewrite detach() in terms of this function.
+template<typename Allocator, typename S>
+void detach_with_allocator(Allocator allocator, S sender) {
+	auto p = frg::construct<detach_details_::control_block<Allocator, S>>(allocator,
+			allocator, std::move(sender));
+	execution::start(p->operation);
+}
+
 // ----------------------------------------------------------------------------
 // awaitable.
 // ----------------------------------------------------------------------------
