@@ -109,6 +109,52 @@ public:
 };
 
 // ----------------------------------------------------------------------------
+// any_receiver<T>.
+// ----------------------------------------------------------------------------
+
+template<typename T>
+struct any_receiver {
+	template<typename R>
+	any_receiver(R receiver) {
+		static_assert(std::is_trivially_copyable_v<R>);
+		new (stor_) R(receiver);
+		set_value_fptr_ = [] (void *p, T value) {
+			auto *rp = static_cast<R *>(p);
+			rp->set_value(std::move(value));
+		};
+	}
+
+	void set_value(T value) {
+		set_value_fptr_(stor_, std::move(value));
+	}
+
+private:
+	alignas(alignof(void *)) char stor_[sizeof(void *)];
+	void (*set_value_fptr_) (void *, T);
+};
+
+template<>
+struct any_receiver<void> {
+	template<typename R>
+	any_receiver(R receiver) {
+		static_assert(std::is_trivially_copyable_v<R>);
+		new (stor_) R(receiver);
+		set_value_fptr_ = [] (void *p) {
+			auto *rp = static_cast<R *>(p);
+			rp->set_value();
+		};
+	}
+
+	void set_value() {
+		set_value_fptr_(stor_);
+	}
+
+private:
+	alignas(alignof(void *)) char stor_[sizeof(void *)];
+	void (*set_value_fptr_) (void *);
+};
+
+// ----------------------------------------------------------------------------
 // Legacy utilities.
 // ----------------------------------------------------------------------------
 
