@@ -21,3 +21,15 @@ gtest_binary = executable('gtests',
 	])
 
 test('gtest test', gtest_binary)
+
+hotdoc = import('hotdoc')
+docs = hotdoc.generate_doc('libasync',
+	project_version: '0',
+	sitemap: 'docs/sitemap',
+	index: 'docs/src/index.md',
+	extra_assets: [ 'docs/assets/' ],
+)
+
+run_target('build-doc',
+	command: [ files('docs/run_hotdoc'), docs.config_path(), ],
+)
