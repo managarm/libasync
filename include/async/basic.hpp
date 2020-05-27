@@ -25,7 +25,7 @@ namespace async::platform {
 #include <async/platform.hpp>
 #endif
 
-#if __has_include(<coroutine>)
+#if __has_include(<coroutine>) && !defined(LIBASYNC_FORCE_USE_EXPERIMENTAL)
 #include <coroutine>
 namespace corons = std;
 #else
