@@ -416,6 +416,7 @@ struct queue_scope {
 
 private:
 	run_queue *_queue;
+	run_queue *_prev_queue;
 };
 
 struct current_queue_token {
@@ -445,12 +446,13 @@ inline run_queue *get_current_queue() {
 
 inline queue_scope::queue_scope(run_queue *queue)
 : _queue{queue} {
+	_prev_queue = _thread_current_queue;
 	_thread_current_queue = _queue;
 }
 
 inline queue_scope::~queue_scope() {
 	assert(_thread_current_queue == _queue);
-	_thread_current_queue = nullptr;
+	_thread_current_queue = _prev_queue;
 }
 
 // ----------------------------------------------------------------------------
