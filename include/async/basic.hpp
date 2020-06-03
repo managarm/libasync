@@ -365,7 +365,10 @@ run(Sender s, RunToken rt, IoService ios) {
 		rt.run_iteration();
 		if (!rt.is_drained())
 			continue;
-		ios.wait();
+
+		// Make sure we don't go into the io service while there is nothing to wait for
+		if (!st.done)
+			ios.wait();
 	}
 }
 
@@ -400,7 +403,10 @@ run(Sender s, RunToken rt, IoService ios) {
 		rt.run_iteration();
 		if (!rt.is_drained())
 			continue;
-		ios.wait();
+
+		// Make sure we don't go into the io service while there is nothing to wait for
+		if (!st.done)
+			ios.wait();
 	}
 	return std::move(*st.value);
 }
