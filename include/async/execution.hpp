@@ -67,17 +67,39 @@ namespace cpo_types {
 				op.start();
             else if constexpr (has_global_start_v<Operation>)
 				start(std::forward<Operation>(op));
+			else if constexpr (requires { op.start_inline(); })
+				op.start_inline();
 			else
 				static_assert(dependent_false_t<Operation>,
 						"No start() customization defined for operation type");
         }
-    };
+	};
+
+	struct start_inline_cpo {
+		template<typename Operation>
+		bool operator() (Operation &&op) const {
+			if constexpr (requires { op.start_inline(); }) {
+				return op.start_inline();
+			}else if constexpr (has_start_member_v<Operation>) {
+				op.start();
+				return false;
+			}else if constexpr (has_global_start_v<Operation>) {
+				start(std::forward<Operation>(op));
+				return false;
+			}else{
+				static_assert(dependent_false_t<Operation>,
+						"No start() customization defined for operation type");
+			}
+		}
+	};
 
 	struct set_value_cpo {
 		template<typename Receiver, typename T>
 		void operator() (Receiver &&r, T &&value) {
 			if constexpr (requires { r.set_value(std::forward<T>(value)); })
 				r.set_value(std::forward<T>(value));
+			else if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
+				r.set_value_noinline(std::forward<T>(value));
 			else
 				static_assert(dependent_false_t<Receiver>,
 						"No set_value() customization defined for receiver type");
@@ -87,9 +109,59 @@ namespace cpo_types {
 		void operator() (Receiver &&r) {
 			if constexpr (requires { r.set_value(); })
 				r.set_value();
+			else if constexpr (requires { r.set_value_noinline(); })
+				r.set_value_noinline();
 			else
 				static_assert(dependent_false_t<Receiver>,
 						"No set_value() customization defined for receiver type");
+		}
+	};
+
+	struct set_value_inline_cpo {
+		template<typename Receiver, typename T>
+		void operator() (Receiver &&r, T &&value) {
+			if constexpr (requires { r.set_value_inline(std::forward<T>(value)); })
+				r.set_value_inline(std::forward<T>(value));
+			else if constexpr (requires { r.set_value(std::forward<T>(value)); })
+				r.set_value(std::forward<T>(value));
+			else
+				static_assert(dependent_false_t<Receiver>,
+						"No set_value_inline() customization defined for receiver type");
+		}
+
+		template<typename Receiver>
+		void operator() (Receiver &&r) {
+			if constexpr (requires { r.set_value_inline(); })
+				r.set_value_inline();
+			else if constexpr (requires { r.set_value(); })
+				r.set_value();
+			else
+				static_assert(dependent_false_t<Receiver>,
+						"No set_value_inline() customization defined for receiver type");
+		}
+	};
+
+	struct set_value_noinline_cpo {
+		template<typename Receiver, typename T>
+		void operator() (Receiver &&r, T &&value) {
+			if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
+				r.set_value_noinline(std::forward<T>(value));
+			else if constexpr (requires { r.set_value(std::forward<T>(value)); })
+				r.set_value(std::forward<T>(value));
+			else
+				static_assert(dependent_false_t<Receiver>,
+						"No set_value_noinline() customization defined for receiver type");
+		}
+
+		template<typename Receiver>
+		void operator() (Receiver &&r) {
+			if constexpr (requires { r.set_value_noinline(); })
+				r.set_value_noinline();
+			else if constexpr (requires { r.set_value(); })
+				r.set_value();
+			else
+				static_assert(dependent_false_t<Receiver>,
+						"No set_value_noinline() customization defined for receiver type");
 		}
 	};
 }
@@ -100,7 +172,10 @@ namespace execution {
 
 	inline cpo_types::connect_cpo connect;
 	inline cpo_types::start_cpo start;
+	inline cpo_types::start_inline_cpo start_inline;
 	inline cpo_types::set_value_cpo set_value;
+	inline cpo_types::set_value_inline_cpo set_value_inline;
+	inline cpo_types::set_value_noinline_cpo set_value_noinline;
 }
 
 } // namespace async

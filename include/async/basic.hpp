@@ -43,7 +43,11 @@ template<typename S, typename T = void>
 struct [[nodiscard]] sender_awaiter {
 private:
 	struct receiver {
-		void set_value(T result) {
+		void set_value_inline(T result) {
+			p_->result_.emplace(std::move(result));
+		}
+
+		void set_value_noinline(T result) {
 			p_->result_.emplace(std::move(result));
 			p_->h_.resume();
 		}
@@ -60,9 +64,9 @@ public:
 		return false;
 	}
 
-	void await_suspend(corons::coroutine_handle<> h) {
+	bool await_suspend(corons::coroutine_handle<> h) {
 		h_ = h;
-		execution::start(operation_);
+		return !execution::start_inline(operation_);
 	}
 
 	T await_resume() {
