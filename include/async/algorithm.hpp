@@ -90,7 +90,7 @@ public:
 	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_done_{0} { }
 
 	void start() {
-		(ops_.template get<Is>().start(), ...);
+		(execution::start(ops_.template get<Is>()), ...);
 	}
 
 private:
