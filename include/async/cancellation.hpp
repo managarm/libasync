@@ -234,7 +234,7 @@ private:
 		: op_{op} { }
 
 		void operator() () {
-			op_->r_.set_value();
+			execution::set_value(op_->r_);
 		}
 
 	private:
@@ -247,7 +247,7 @@ public:
 
 	void start() {
 		if(!obs_.try_set(cancellation_))
-			r_.set_value();
+			execution::set_value(r_);
 	}
 
 private:

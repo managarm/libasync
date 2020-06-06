@@ -95,10 +95,10 @@ public:
 
 			if(retire_condfail) {
 				st_ = state::retired;
-				r_.set_value(false);
+				execution::set_value(r_, false);
 			}else if(retire_cancelled) {
 				st_ = state::retired;
-				r_.set_value(true);
+				execution::set_value(r_, true);
 			}
 		}
 
@@ -118,13 +118,13 @@ public:
 			}
 
 			st_ = state::retired;
-			r_.set_value(true);
+			execution::set_value(r_, true);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset()) {
 				st_ = state::retired;
-				r_.set_value(true);
+				execution::set_value(r_, true);
 			}
 		}
 

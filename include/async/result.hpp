@@ -271,7 +271,7 @@ namespace detail {
 
 		void start() {
 			res_.then([this] () {
-				rcv_.set_value(std::move(res_.value()));
+				execution::set_value(rcv_, std::move(res_.value()));
 			});
 		}
 
@@ -291,7 +291,7 @@ namespace detail {
 
 		void start() {
 			res_.then([this] {
-				rcv_.set_value();
+				execution::set_value(rcv_);
 			});
 		}
 

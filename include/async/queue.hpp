@@ -57,10 +57,10 @@ public:
 				assert(q_->sinks_.empty());
 				auto object = std::move(q_->buffer_.front());
 				q_->buffer_.pop_front();
-				r_.set_value(std::move(object));
+				execution::set_value(r_, std::move(object));
 			}else{
 				if(!cobs_.try_set(ct_)) {
-					r_.set_value(frg::null_opt);
+					execution::set_value(r_, frg::null_opt);
 				}else{
 					q_->sinks_.push_back(this);
 				}
@@ -70,17 +70,17 @@ public:
 	private:
 		void cancel() {
 			if(value_) {
-				r_.set_value(std::move(value_));
+				execution::set_value(r_, std::move(value_));
 			}else{
 				auto it = q_->sinks_.iterator_to(this);
 				q_->sinks_.erase(it);
-				r_.set_value(frg::null_opt);
+				execution::set_value(r_, frg::null_opt);
 			}
 		}
 
 		void consume(T object) override {
 			if(cobs_.try_reset()) {
-				r_.set_value(std::move(object));
+				execution::set_value(r_, std::move(object));
 			}else{
 				value_ = std::move(object);
 			}

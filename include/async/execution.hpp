@@ -62,16 +62,36 @@ namespace cpo_types {
 
 	struct start_cpo {
         template<typename Operation>
-        auto operator() (Operation &&op) const {
+        void operator() (Operation &&op) const {
             if constexpr (has_start_member_v<Operation>)
-				return op.start();
+				op.start();
             else if constexpr (has_global_start_v<Operation>)
-				return start(std::forward<Operation>(op));
+				start(std::forward<Operation>(op));
 			else
 				static_assert(dependent_false_t<Operation>,
 						"No start() customization defined for operation type");
         }
     };
+
+	struct set_value_cpo {
+		template<typename Receiver, typename T>
+		void operator() (Receiver &&r, T &&value) {
+			if constexpr (requires { r.set_value(std::forward<T>(value)); })
+				r.set_value(std::forward<T>(value));
+			else
+				static_assert(dependent_false_t<Receiver>,
+						"No set_value() customization defined for receiver type");
+		}
+
+		template<typename Receiver>
+		void operator() (Receiver &&r) {
+			if constexpr (requires { r.set_value(); })
+				r.set_value();
+			else
+				static_assert(dependent_false_t<Receiver>,
+						"No set_value() customization defined for receiver type");
+		}
+	};
 }
 
 namespace execution {
@@ -80,6 +100,7 @@ namespace execution {
 
 	inline cpo_types::connect_cpo connect;
 	inline cpo_types::start_cpo start;
+	inline cpo_types::set_value_cpo set_value;
 }
 
 } // namespace async

@@ -58,7 +58,7 @@ private:
 						self_->cs_[j].cancel();
 			}
 			if(n + 1 == sizeof...(Is))
-				self_->r_.set_value();
+				execution::set_value(self_->r_);
 		}
 
 	private:
