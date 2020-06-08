@@ -188,9 +188,13 @@ namespace detail {
 			return awaiter{this};
 		}
 
-		template<typename... V>
-		void return_value(V &&... value) {
-			async::awaitable<T>::emplace_value(std::forward<V>(value)...);
+		void return_value(T value) {
+			async::awaitable<T>::emplace_value(std::move(value));
+		}
+
+		template<typename X>
+		void return_value(X &&value) {
+			async::awaitable<T>::emplace_value(std::forward<X>(value));
 		}
 
 		void unhandled_exception() {
