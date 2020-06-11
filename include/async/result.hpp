@@ -73,7 +73,7 @@ namespace detail {
 }
 
 template<typename T>
-struct result : private detail::result_base<T> {
+struct [[nodiscard]] result : private detail::result_base<T> {
 private:
 	using detail::result_base<T>::object;
 
@@ -109,7 +109,7 @@ public:
 };
 
 template<>
-struct result<void> : private detail::result_base<void> {
+struct [[nodiscard]] result<void> : private detail::result_base<void> {
 private:
 	using detail::result_base<void>::object;
 
