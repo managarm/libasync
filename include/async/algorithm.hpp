@@ -23,6 +23,52 @@ connect_helper<Sender, Receiver> make_connect_helper(Sender s, Receiver r) {
 	return {std::move(s), std::move(r)};
 }
 
+//---------------------------------------------------------------------------------------
+// transform()
+//---------------------------------------------------------------------------------------
+
+template<typename Receiver, typename F>
+struct transform_receiver {
+	transform_receiver(Receiver dr, F f)
+	: dr_{std::move(dr)}, f_{std::move(f)} { }
+
+	template<typename X>
+	void set_value(X value) {
+		execution::set_value(dr_, f_(std::move(value)));
+	}
+
+private:
+	Receiver dr_; // Downstream receiver.
+	[[no_unique_address]] F f_;
+};
+
+template<typename Sender, typename F>
+struct [[nodiscard]] transform_sender {
+	using value_type = std::invoke_result_t<F, typename Sender::value_type>;
+
+	template<typename Receiver>
+	friend auto connect(transform_sender s, Receiver dr) {
+		return execution::connect(std::move(s.ds),
+				transform_receiver<Receiver, F>{std::move(dr), std::move(s.f)});
+	}
+
+	sender_awaiter<transform_sender, value_type> operator co_await () {
+		return {std::move(*this)};
+	}
+
+	Sender ds; // Downstream sender.
+	F f;
+};
+
+template<typename Sender, typename F>
+transform_sender<Sender, F> transform(Sender ds, F f) {
+	return {std::move(ds), std::move(f)};
+}
+
+//---------------------------------------------------------------------------------------
+// race_and_cancel()
+//---------------------------------------------------------------------------------------
+
 template<typename Receiver, typename Tuple, typename S>
 struct race_and_cancel_operation;
 
