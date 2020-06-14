@@ -20,18 +20,31 @@ private:
 	friend struct post_ack_handle<T>;
 	friend struct post_ack_agent<T>;
 
+/*
+	struct state {
+		none,
+		submitted,
+		pending,
+		retired
+	};
+*/
+
 	struct node {
 		virtual void complete() = 0;
 
 		uint64_t node_seq;
 		std::atomic<unsigned int> acks_left;
+		// These following fields are protected by the mechanism's mutex_.
 		frg::default_list_hook<node> hook;
 		T object;
 	};
 
 	struct poll_node {
-		virtual void complete(node *nd) = 0;
+		virtual void complete() = 0;
 
+		// These fields are protected by the mechanism's mutex_.
+		bool pending = false;
+		node *nd = nullptr;
 		frg::default_list_hook<poll_node> hook;
 	};
 
@@ -65,12 +78,19 @@ public:
 
 				node::acks_left.store(mech_->active_agents_, std::memory_order_relaxed);
 				mech_->queue_.push_back(this);
-				poll_pending.splice(poll_pending.end(), mech_->poll_queue_);
+				while(!mech_->poll_queue_.empty()) {
+					auto pn = mech_->poll_queue_.pop_front();
+					assert(!pn->pending);
+					assert(!pn->nd);
+					pn->pending = true;
+					pn->nd = this;
+					poll_pending.push_back(pn);
+				}
 			}
 
 			while(!poll_pending.empty()) {
 				auto pn = poll_pending.pop_front();
-				pn->complete(this);
+				pn->complete();
 			}
 			return false;
 		}
@@ -260,39 +280,72 @@ public:
 
 	template<typename R>
 	struct [[nodiscard]] poll_operation : private poll_node {
-		poll_operation(post_ack_agent *agnt, R receiver)
-		: agnt_{agnt}, receiver_{std::move(receiver)} { }
+	private:
+		using poll_node::pending;
+		using poll_node::nd;
+
+	public:
+		poll_operation(post_ack_agent *agnt, cancellation_token ct, R receiver)
+		: agnt_{agnt}, ct_{ct}, receiver_{std::move(receiver)} { }
 
 		void start() {
 			assert(agnt_->mech_);
 
 			auto seq = agnt_->poll_seq_++;
 
-			node *nd;
 			{
 				frg::unique_lock lock(agnt_->mech_->mutex_);
+				assert(!nd);
 
-				if(agnt_->mech_->post_seq_ <= seq) {
+				if(agnt_->mech_->post_seq_ > seq) {
+					// Fast path: successful completion.
+					auto it = std::find_if(
+							agnt_->mech_->queue_.begin(),
+							agnt_->mech_->queue_.end(),
+							[&] (auto cand) { return cand->node_seq == seq; });
+					assert(it != agnt_->mech_->queue_.end());
+					pending = true;
+					nd = *it;
+				}else if(!cobs_.try_set(ct_)) {
+					// Fast path: cancellation.
+					pending = true;
+				}else{
+					// Slow path.
 					agnt_->mech_->poll_queue_.push_back(this);
 					return;
 				}
-
-				auto it = std::find_if(agnt_->mech_->queue_.begin(), agnt_->mech_->queue_.end(),
-						[&] (auto cand) { return cand->node_seq == seq; });
-				assert(it != agnt_->mech_->queue_.end());
-				nd = *it;
 			}
 
 			execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
 		}
 
 	private:
-		void complete(node *nd) {
-			execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+		void complete() override {
+			if(cobs_.try_reset())
+				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+		}
+
+		void complete_cancel() {
+			{
+				frg::unique_lock lock(agnt_->mech_->mutex_);
+
+				if(!pending) {
+					assert(!nd);
+					pending = true;
+					agnt_->mech_->poll_queue_.erase(agnt_->mech_->poll_queue_.iterator_to(this));
+				}
+			}
+
+			if(nd)
+				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+			else
+				execution::set_value(receiver_, post_ack_handle<T>{});
 		}
 
 		post_ack_agent *agnt_;
+		cancellation_token ct_;
 		R receiver_;
+		cancellation_observer<frg::bound_mem_fn<&poll_operation::complete_cancel>> cobs_{this};
 	};
 
 	struct [[nodiscard]] poll_sender {
@@ -305,14 +358,15 @@ public:
 
 		template<typename R>
 		poll_operation<R> connect(R receiver) {
-			return {agnt, std::move(receiver)};
+			return {agnt, std::move(ct), std::move(receiver)};
 		}
 
 		post_ack_agent *agnt;
+		cancellation_token ct;
 	};
 
-	poll_sender poll() {
-		return {this};
+	poll_sender poll(cancellation_token ct = {}) {
+		return {this, std::move(ct)};
 	}
 
 private:
