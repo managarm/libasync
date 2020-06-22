@@ -121,6 +121,9 @@ struct any_receiver {
 	template<typename R>
 	any_receiver(R receiver) {
 		static_assert(std::is_trivially_copyable_v<R>);
+		static_assert(sizeof(R) <= sizeof(void *));
+		static_assert(alignof(R) <= alignof(void *));
+
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p, T value) {
 			auto *rp = static_cast<R *>(p);
