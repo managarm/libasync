@@ -659,8 +659,8 @@ namespace detach_details_ {
 	void finalize(control_block<Allocator, S> *cb);
 
 	template<typename Allocator, typename S>
-	struct receiver {
-		receiver(control_block<Allocator, S> *cb)
+	struct final_receiver {
+		final_receiver(control_block<Allocator, S> *cb)
 		: cb_{cb} { }
 
 		void set_value() {
@@ -682,10 +682,11 @@ namespace detach_details_ {
 
 		control_block(Allocator allocator, S sender)
 		: allocator{std::move(allocator)},
-				operation{execution::connect(std::move(sender), receiver<Allocator, S>{this})} { }
+				operation{execution::connect(
+						std::move(sender), final_receiver<Allocator, S>{this})} { }
 
 		Allocator allocator;
-		execution::operation_t<S, receiver<Allocator, S>> operation;
+		execution::operation_t<S, final_receiver<Allocator, S>> operation;
 	};
 }
 
@@ -694,6 +695,56 @@ template<typename Allocator, typename S>
 void detach_with_allocator(Allocator allocator, S sender) {
 	auto p = frg::construct<detach_details_::control_block<Allocator, S>>(allocator,
 			allocator, std::move(sender));
+	execution::start(p->operation);
+}
+
+namespace spawn_details_ {
+	template<typename Allocator, typename S, typename R>
+	struct control_block;
+
+	template<typename Allocator, typename S, typename R>
+	void finalize(control_block<Allocator, S, R> *cb);
+
+	template<typename Allocator, typename S, typename R>
+	struct final_receiver {
+		final_receiver(control_block<Allocator, S, R> *cb)
+		: cb_{cb} { }
+
+		template<typename... Args>
+		void set_value(Args &&... args) {
+			cb_->dr.set_value(std::forward<Args>(args)...);
+			finalize(cb_);
+		}
+
+	private:
+		control_block<Allocator, S, R> *cb_;
+	};
+
+	// Heap-allocate data structure that holds the operation.
+	// We cannot directly put the operation onto the heap as it is non-movable.
+	template<typename Allocator, typename S, typename R>
+	struct control_block {
+		friend void finalize(control_block<Allocator, S, R> *cb) {
+			auto allocator = std::move(cb->allocator);
+			frg::destruct(allocator, cb);
+		}
+
+		control_block(Allocator allocator, S sender, R dr)
+		: allocator{std::move(allocator)},
+				operation{execution::connect(
+						std::move(sender), final_receiver<Allocator, S, R>{this})},
+				dr{std::move(dr)} { }
+
+		Allocator allocator;
+		execution::operation_t<S, final_receiver<Allocator, S, R>> operation;
+		R dr; // Downstream receiver.
+	};
+}
+
+template<typename Allocator, typename S, typename R>
+void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
+	auto p = frg::construct<spawn_details_::control_block<Allocator, S, R>>(allocator,
+			allocator, std::move(sender), std::move(receiver));
 	execution::start(p->operation);
 }
 
