@@ -1,90 +1,127 @@
-#ifndef ASYNC_MUTEX_HPP
-#define ASYNC_MUTEX_HPP
+#pragma once
 
 #include <frg/list.hpp>
-#include <async/result.hpp>
+#include <async/basic.hpp>
 
 namespace async {
 
 namespace detail {
 	struct mutex {
-		struct node : awaitable<void> {
-			friend mutex;
-			using awaitable<void>::set_ready;
-
-			node(mutex *owner)
-			: _owner{owner} { }
+	private:
+		struct node {
+			node() = default;
 
 			node(const node &) = delete;
 
 			node &operator= (const node &) = delete;
 
-			void submit() override {
-				frg::unique_lock lock(_owner->_mutex);
+			virtual void complete() = 0;
 
-				if(_owner->_locked) {
-					_owner->_waiters.push_back(this);
+			frg::default_list_hook<node> hook;
+		};
+
+	public:
+		mutex() = default;
+
+		// ------------------------------------------------------------------------------
+		// async_lock and boilerplate.
+		// ------------------------------------------------------------------------------
+
+		template<typename R>
+		struct [[nodiscard]] lock_operation : private node {
+			lock_operation(mutex *self, R receiver)
+			: self_{self}, receiver_{std::move(receiver)} { }
+
+			bool start() {
+				frg::unique_lock lock(self_->mutex_);
+
+				if(!self_->locked_) {
+					// Fast path.
+					self_->locked_ = true;
 				}else{
-					set_ready();
-					_owner->_locked = true;
+					// Slow path.
+					self_->waiters_.push_back(this);
+					return false;
 				}
-			}
 
-			void dispose() override {
-				assert(ready());
-				delete this;
+				execution::set_value_inline(receiver_);
+				return true;
 			}
 
 		private:
-			mutex *_owner;
-			frg::default_list_hook<node> _hook;
+			void complete() override {
+				execution::set_value_noinline(receiver_);
+			}
+
+			mutex *self_;
+			R receiver_;
 		};
 
-		mutex()
-		: _locked{false} { }
+		struct [[nodiscard]] lock_sender {
+			using value_type = void;
 
-		result<void> async_lock() {
-			return result<void>{new node{this}};
+			template<typename R>
+			lock_operation<R> connect(R receiver) {
+				return {self, std::move(receiver)};
+			}
+
+			sender_awaiter<lock_sender>
+			operator co_await () {
+				return {*this};
+			}
+
+			mutex *self;
+		};
+
+		lock_sender async_lock() {
+			return {this};
 		}
 
-		bool try_lock() {
-			frg::unique_lock lock(_mutex);
+		// ------------------------------------------------------------------------------
 
-			if (_locked)
+		bool try_lock() {
+			frg::unique_lock lock(mutex_);
+
+			if (locked_)
 				return false;
 
-			_locked = true;
+			locked_ = true;
 			return true;
 		}
 
 		void unlock() {
-			frg::unique_lock lock(_mutex);
-			assert(_locked);
+			node *next;
+			{
+				frg::unique_lock lock(mutex_);
+				assert(locked_);
 
-			if(_waiters.empty()) {
-				_locked = false;
-			}else{
-				auto item = _waiters.pop_front();
-				item->set_ready();
+				if(waiters_.empty()) {
+					locked_ = false;
+					return;
+				}
+
+				next = waiters_.pop_front();
 			}
+
+			next->complete();
 		}
 
 	private:
-		platform::mutex _mutex;
-		bool _locked;
+		platform::mutex mutex_;
+
+		bool locked_ = false;
+
 		frg::intrusive_list<
 			node,
 			frg::locate_member<
 				node,
 				frg::default_list_hook<node>,
-				&node::_hook
+				&node::hook
 			>
-		> _waiters;
+		> waiters_;
 	};
 }
 
 using detail::mutex;
 
 } // namespace async
-
-#endif // ASYNC_MUTEX_HPP
