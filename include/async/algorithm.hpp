@@ -28,8 +28,8 @@ connect_helper<Sender, Receiver> make_connect_helper(Sender s, Receiver r) {
 //---------------------------------------------------------------------------------------
 
 template<typename Receiver, typename F>
-struct transform_receiver {
-	transform_receiver(Receiver dr, F f)
+struct value_transform_receiver {
+	value_transform_receiver(Receiver dr, F f)
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
 	template<typename X>
@@ -42,14 +42,52 @@ private:
 	[[no_unique_address]] F f_;
 };
 
+template<typename Receiver, typename F>
+struct void_transform_receiver {
+	void_transform_receiver(Receiver dr, F f)
+	: dr_{std::move(dr)}, f_{std::move(f)} { }
+
+	void set_value() {
+		f_();
+		execution::set_value(dr_);
+	}
+
+private:
+	Receiver dr_; // Downstream receiver.
+	[[no_unique_address]] F f_;
+};
+
 template<typename Sender, typename F>
-struct [[nodiscard]] transform_sender {
+struct [[nodiscard]] transform_sender;
+
+template<typename Sender, typename F>
+requires (!std::is_same_v<typename Sender::value_type, void>)
+struct [[nodiscard]] transform_sender<Sender, F> {
 	using value_type = std::invoke_result_t<F, typename Sender::value_type>;
 
 	template<typename Receiver>
 	friend auto connect(transform_sender s, Receiver dr) {
 		return execution::connect(std::move(s.ds),
-				transform_receiver<Receiver, F>{std::move(dr), std::move(s.f)});
+				value_transform_receiver<Receiver, F>{std::move(dr), std::move(s.f)});
+	}
+
+	sender_awaiter<transform_sender, value_type> operator co_await () {
+		return {std::move(*this)};
+	}
+
+	Sender ds; // Downstream sender.
+	F f;
+};
+
+template<typename Sender, typename F>
+requires std::is_same_v<typename Sender::value_type, void>
+struct [[nodiscard]] transform_sender<Sender, F> {
+	using value_type = std::invoke_result_t<F>;
+
+	template<typename Receiver>
+	friend auto connect(transform_sender s, Receiver dr) {
+		return execution::connect(std::move(s.ds),
+				void_transform_receiver<Receiver, F>{std::move(dr), std::move(s.f)});
 	}
 
 	sender_awaiter<transform_sender, value_type> operator co_await () {
