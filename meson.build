@@ -21,6 +21,7 @@ gtest_binary = executable('gtests',
 	'tests/queue.cpp',
 	'tests/mutex.cpp',
 	'tests/race.cpp',
+	'tests/let.cpp',
 	include_directories: include_directories('include/'),
 	cpp_args: cpp_args,
 	dependencies: [

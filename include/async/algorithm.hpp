@@ -282,4 +282,65 @@ race_and_cancel_sender<Functors...> race_and_cancel(Functors... fs) {
 	return {{fs...}};
 }
 
+//---------------------------------------------------------------------------------------
+// let()
+//---------------------------------------------------------------------------------------
+
+template <typename Receiver, typename Pred, typename Func>
+struct let_operation {
+	using imm_type = std::invoke_result_t<Pred>;
+	using sender_type = std::invoke_result_t<Func, std::add_lvalue_reference_t<imm_type>>;
+	using value_type = typename sender_type::value_type;
+
+	let_operation(Pred pred, Func func, Receiver r)
+	: pred_{std::move(pred)}, func_{std::move(func)}, imm_{}, r_{std::move(r)} { }
+
+	let_operation(const let_operation &) = delete;
+	let_operation &operator=(const let_operation &) = delete;
+
+	~let_operation() {
+		op_.destruct();
+	}
+
+public:
+	void start() {
+		imm_ = std::move(pred_());
+		op_.construct_with([&]{ return execution::connect(func_(imm_), std::move(r_)); });
+		op_->start();
+	}
+
+private:
+	Pred pred_;
+	Func func_;
+	imm_type imm_;
+	Receiver r_;
+	frg::manual_box<execution::operation_t<sender_type, Receiver>> op_;
+};
+
+template <typename Pred, typename Func>
+struct [[nodiscard]] let_sender {
+	using imm_type = std::invoke_result_t<Pred>;
+	using value_type = typename std::invoke_result_t<Func, std::add_lvalue_reference_t<imm_type>>::value_type;
+
+	template<typename Receiver>
+	friend let_operation<Receiver, Pred, Func>
+	connect(let_sender s, Receiver r) {
+		return {std::move(s.pred), std::move(s.func), std::move(r)};
+	}
+
+	Pred pred;
+	Func func;
+};
+
+template <typename Pred, typename Func>
+sender_awaiter<let_sender<Pred, Func>, typename let_sender<Pred, Func>::value_type>
+operator co_await(let_sender<Pred, Func> s) {
+	return {std::move(s)};
+}
+
+template <typename Pred, typename Func>
+let_sender<Pred, Func> let(Pred pred, Func func) {
+	return {std::move(pred), std::move(func)};
+}
+
 } // namespace async
