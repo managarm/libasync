@@ -1,5 +1,6 @@
 #pragma once
 
+#include <frg/manual_box.hpp>
 #include <frg/tuple.hpp>
 #include <async/basic.hpp>
 #include <async/cancellation.hpp>
@@ -101,6 +102,92 @@ struct [[nodiscard]] transform_sender<Sender, F> {
 template<typename Sender, typename F>
 transform_sender<Sender, F> transform(Sender ds, F f) {
 	return {std::move(ds), std::move(f)};
+}
+
+//---------------------------------------------------------------------------------------
+// repeat_while()
+//---------------------------------------------------------------------------------------
+
+template<typename C, typename SF, typename R>
+struct [[nodiscard]] repeat_while_operation {
+	using sender_type = std::invoke_result_t<SF>;
+
+	repeat_while_operation(C cond, SF factory, R dr)
+	: cond_{std::move(cond)}, factory_{std::move(factory)}, dr_{std::move(dr)} { }
+
+	repeat_while_operation(const repeat_while_operation &) = delete;
+
+	repeat_while_operation &operator=(const repeat_while_operation &) = delete;
+
+	bool start_inline() {
+		if(loop_()) {
+			execution::set_value_inline(dr_);
+			return true;
+		}
+
+		return false;
+	}
+
+private:
+	// Returns true if repeat_while() completes.
+	bool loop_() {
+		while(cond_()) {
+			box_.construct_with([&] {
+				return execution::connect(factory_(), receiver{this});
+			});
+			if(!execution::start_inline(*box_))
+				return false;
+			box_.destruct();
+		}
+
+		return true;
+	}
+
+	struct receiver {
+		receiver(repeat_while_operation *self)
+		: self_{self} { }
+
+		void set_value_inline() {
+			// Do nothing.
+		}
+
+		void set_value_noinline() {
+			auto s = self_; // box_.destruct() will destruct this.
+			s->box_.destruct();
+			if(s->loop_())
+				execution::set_value_noinline(s->dr_);
+		}
+
+	private:
+		repeat_while_operation *self_;
+	};
+
+	C cond_;
+	SF factory_;
+	R dr_; // Downstream receiver.
+	frg::manual_box<execution::operation_t<sender_type, receiver>> box_;
+};
+
+template<typename C, typename SF>
+struct repeat_while_sender {
+	using value_type = void;
+
+	sender_awaiter<repeat_while_sender> operator co_await() {
+		return {std::move(*this)};
+	}
+
+	template<typename R>
+	repeat_while_operation<C, SF, R> connect(R receiver) {
+		return {std::move(cond), std::move(factory), std::move(receiver)};
+	}
+
+	C cond;
+	SF factory;
+};
+
+template<typename C, typename SF>
+repeat_while_sender<C, SF> repeat_while(C cond, SF factory) {
+	return {std::move(cond), std::move(factory)};
 }
 
 //---------------------------------------------------------------------------------------
