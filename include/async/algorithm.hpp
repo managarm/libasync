@@ -343,4 +343,118 @@ let_sender<Pred, Func> let(Pred pred, Func func) {
 	return {std::move(pred), std::move(func)};
 }
 
+//---------------------------------------------------------------------------------------
+// sequence()
+//---------------------------------------------------------------------------------------
+
+template <typename R, typename ...Senders> requires (sizeof...(Senders) > 0)
+struct [[nodiscard]] sequence_operation {
+	sequence_operation(frg::tuple<Senders...> senders, R dr)
+	: senders_{std::move(senders)}, dr_{std::move(dr)} { }
+
+	sequence_operation(const sequence_operation &) = delete;
+	sequence_operation &operator=(const sequence_operation &) = delete;
+
+	void start() {
+		do_step<0>();
+	}
+
+private:
+	template <size_t Index>
+	using nth_sender = std::tuple_element_t<Index, std::tuple<Senders...>>;
+
+	template <size_t Index>
+	void do_step() {
+		using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+
+		auto op = std::launder(new (box_.buffer) operation_type{
+			execution::connect(std::move(senders_.template get<Index>()), receiver<Index>{this})
+		});
+		execution::start(*op);
+	}
+
+	template <size_t Index>
+	struct receiver {
+		using value_type = typename nth_sender<Index>::value_type;
+		static_assert((Index == sizeof...(Senders) - 1) || std::is_same_v<value_type, void>,
+				"All but the last sender must return void");
+
+		receiver(sequence_operation *self)
+		: self_{self} { }
+
+		void set_value() requires (Index < sizeof...(Senders) - 1) {
+			using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+			auto s = self_; // following lines will destruct this.
+			auto op = reinterpret_cast<operation_type *>(s->box_.buffer);
+			op->~operation_type();
+
+			s->template do_step<Index + 1>();
+		}
+
+		void set_value()
+				requires ((Index == sizeof...(Senders) - 1)
+						&& (std::is_same_v<value_type, void>)) {
+			using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+			auto s = self_; // following lines will destruct this.
+			auto op = reinterpret_cast<operation_type *>(s->box_.buffer);
+			op->~operation_type();
+
+			execution::set_value(s->dr_);
+		}
+
+		template <typename T>
+		void set_value(T value)
+				requires ((Index == sizeof...(Senders) - 1)
+						&& (!std::is_same_v<value_type, void>)
+						&& (std::is_same_v<value_type, T>)) {
+			using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+			auto s = self_; // following lines will destruct this.
+			auto op = reinterpret_cast<operation_type *>(s->box_.buffer);
+			op->~operation_type();
+
+			execution::set_value(s->dr_, std::move(value));
+		}
+
+	private:
+		sequence_operation *self_;
+	};
+
+	frg::tuple<Senders...> senders_;
+	R dr_; // Downstream receiver.
+
+	static constexpr size_t max_operation_size = []<size_t ...I>(std::index_sequence<I...>) {
+		return std::max({sizeof(execution::operation_t<nth_sender<I>, receiver<I>>)...});
+	}(std::make_index_sequence<sizeof...(Senders)>{});
+
+	static constexpr size_t max_operation_alignment = []<size_t ...I>(std::index_sequence<I...>) {
+		return std::max({alignof(execution::operation_t<nth_sender<I>, receiver<I>>)...});
+	}(std::make_index_sequence<sizeof...(Senders)>{});
+
+	frg::aligned_storage<max_operation_size, max_operation_alignment> box_;
+};
+
+template <typename ...Senders> requires (sizeof...(Senders) > 0)
+struct [[nodiscard]] sequence_sender {
+	using value_type = typename std::tuple_element_t<sizeof...(Senders) - 1, std::tuple<Senders...>>::value_type;
+
+	template<typename Receiver>
+	friend sequence_operation<Receiver, Senders...>
+	connect(sequence_sender s, Receiver r) {
+		return {std::move(s.senders), std::move(r)};
+	}
+
+	frg::tuple<Senders...> senders;
+};
+
+template <typename ...Senders> requires (sizeof...(Senders) > 0)
+sequence_sender<Senders...> sequence(Senders ...senders) {
+	return {frg::tuple<Senders...>{std::move(senders)...}};
+}
+
+template <typename ...Senders>
+sender_awaiter<sequence_sender<Senders...>, typename sequence_sender<Senders...>::value_type>
+operator co_await(sequence_sender<Senders...> s) {
+	return {std::move(s)};
+}
+
 } // namespace async
