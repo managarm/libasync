@@ -366,7 +366,7 @@ public:
 	void start() {
 		imm_ = std::move(pred_());
 		op_.construct_with([&]{ return execution::connect(func_(imm_), std::move(r_)); });
-		op_->start();
+		execution::start(*op_);
 	}
 
 private:
