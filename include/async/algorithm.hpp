@@ -27,6 +27,55 @@ connect_helper<Sender, Receiver> make_connect_helper(Sender s, Receiver r) {
 }
 
 //---------------------------------------------------------------------------------------
+// invocable()
+//---------------------------------------------------------------------------------------
+
+template<typename F, typename R>
+struct [[nodiscard]] invocable_operation {
+	invocable_operation(F f, R r)
+	: f_{std::move(f)}, r_{std::move(r)} { }
+
+	invocable_operation(const invocable_operation &) = delete;
+
+	invocable_operation &operator= (const invocable_operation &) = delete;
+
+	bool start_inline() {
+		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
+			f_();
+			execution::set_value_inline(r_);
+		}else{
+			execution::set_value_inline(r_, f_());
+		}
+		return true;
+	}
+
+private:
+	F f_;
+	R r_;
+};
+
+template<typename F>
+struct [[nodiscard]] invocable_sender {
+	using value_type = std::invoke_result_t<F>;
+
+	template<typename R>
+	invocable_operation<F, R> connect(R r) {
+		return {std::move(f), std::move(r)};
+	}
+
+	sender_awaiter<F, value_type> operator co_await() {
+		return {*this};
+	}
+
+	F f;
+};
+
+template<typename F>
+invocable_sender<F> invocable(F f) {
+	return {std::move(f)};
+}
+
+//---------------------------------------------------------------------------------------
 // transform()
 //---------------------------------------------------------------------------------------
 
