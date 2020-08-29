@@ -85,12 +85,22 @@ struct value_transform_receiver {
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
 	template<typename X>
-	void set_value(X value) {
+	void set_value_inline(X value) {
 		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
 			f_(std::move(value));
-			execution::set_value(dr_);
+			execution::set_value_inline(dr_);
 		}else{
-			execution::set_value(dr_, f_(std::move(value)));
+			execution::set_value_inline(dr_, f_(std::move(value)));
+		}
+	}
+
+	template<typename X>
+	void set_value_noinline(X value) {
+		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
+			f_(std::move(value));
+			execution::set_value_noinline(dr_);
+		}else{
+			execution::set_value_noinline(dr_, f_(std::move(value)));
 		}
 	}
 
@@ -104,12 +114,21 @@ struct void_transform_receiver {
 	void_transform_receiver(Receiver dr, F f)
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
-	void set_value() {
+	void set_value_inline() {
 		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
 			f_();
-			execution::set_value(dr_);
+			execution::set_value_inline(dr_);
 		}else{
-			execution::set_value(dr_, f_());
+			execution::set_value_inline(dr_, f_());
+		}
+	}
+
+	void set_value_noinline() {
+		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
+			f_();
+			execution::set_value_noinline(dr_);
+		}else{
+			execution::set_value_noinline(dr_, f_());
 		}
 	}
 
