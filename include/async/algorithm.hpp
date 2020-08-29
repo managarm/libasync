@@ -86,7 +86,12 @@ struct value_transform_receiver {
 
 	template<typename X>
 	void set_value(X value) {
-		execution::set_value(dr_, f_(std::move(value)));
+		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
+			f_(std::move(value));
+			execution::set_value(dr_);
+		}else{
+			execution::set_value(dr_, f_(std::move(value)));
+		}
 	}
 
 private:
@@ -100,8 +105,12 @@ struct void_transform_receiver {
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
 	void set_value() {
-		f_();
-		execution::set_value(dr_);
+		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
+			f_();
+			execution::set_value(dr_);
+		}else{
+			execution::set_value(dr_, f_());
+		}
 	}
 
 private:
