@@ -1,9 +1,11 @@
 #pragma once
 
-#include <frg/manual_box.hpp>
-#include <frg/tuple.hpp>
+#include <algorithm>
+
 #include <async/basic.hpp>
 #include <async/cancellation.hpp>
+#include <frg/manual_box.hpp>
+#include <frg/tuple.hpp>
 
 namespace async {
 
