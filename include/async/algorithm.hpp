@@ -432,27 +432,57 @@ struct [[nodiscard]] sequence_operation {
 	: senders_{std::move(senders)}, dr_{std::move(dr)} { }
 
 	sequence_operation(const sequence_operation &) = delete;
+
 	sequence_operation &operator=(const sequence_operation &) = delete;
 
-	void start() {
-		do_step<0>();
+	bool start_inline() {
+		return do_step<0, true>();
 	}
 
 private:
 	template <size_t Index>
 	using nth_sender = std::tuple_element_t<Index, frg::tuple<Senders...>>;
 
-	template <size_t Index>
-	void do_step() {
-		using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+	template <size_t Index, bool InlinePath>
+	requires (InlinePath)
+	bool do_step() {
+		using operation_type = execution::operation_t<nth_sender<Index>,
+				receiver<Index, true>>;
 
-		auto op = std::launder(new (box_.buffer) operation_type{
-			execution::connect(std::move(senders_.template get<Index>()), receiver<Index>{this})
-		});
-		execution::start(*op);
+		auto op = new (box_.buffer) operation_type{
+			execution::connect(std::move(senders_.template get<Index>()),
+					receiver<Index, true>{this})
+		};
+
+		if(execution::start_inline(*op)) {
+			if constexpr (Index == sizeof...(Senders) - 1) {
+				return true;
+			}else{
+				return do_step<Index + 1, true>();
+			}
+		}
+		return false;
 	}
 
-	template <size_t Index>
+	// Same as above but since we are not on the InlinePath, we do not care about the return value.
+	template <size_t Index, bool InlinePath>
+	requires (!InlinePath)
+	void do_step() {
+		using operation_type = execution::operation_t<nth_sender<Index>,
+				receiver<Index, false>>;
+
+		auto op = new (box_.buffer) operation_type{
+			execution::connect(std::move(senders_.template get<Index>()),
+					receiver<Index, false>{this})
+		};
+
+		if(execution::start_inline(*op)) {
+			if constexpr (Index != sizeof...(Senders) - 1)
+				do_step<Index + 1, false>();
+		}
+	}
+
+	template <size_t Index, bool InlinePath>
 	struct receiver {
 		using value_type = typename nth_sender<Index>::value_type;
 		static_assert((Index == sizeof...(Senders) - 1) || std::is_same_v<value_type, void>,
@@ -461,37 +491,84 @@ private:
 		receiver(sequence_operation *self)
 		: self_{self} { }
 
-		void set_value() requires (Index < sizeof...(Senders) - 1) {
-			using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
-			auto s = self_; // following lines will destruct this.
-			auto op = reinterpret_cast<operation_type *>(s->box_.buffer);
+		void set_value_inline() requires (Index < sizeof...(Senders) - 1) {
+			using operation_type = execution::operation_t<nth_sender<Index>,
+					receiver<Index, InlinePath>>;
+			auto op = std::launder(reinterpret_cast<operation_type *>(self_->box_.buffer));
 			op->~operation_type();
 
-			s->template do_step<Index + 1>();
+			// Do nothing: execution continues in do_step().
 		}
 
-		void set_value()
-				requires ((Index == sizeof...(Senders) - 1)
-						&& (std::is_same_v<value_type, void>)) {
-			using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+		void set_value_noinline() requires (Index < sizeof...(Senders) - 1) {
+			using operation_type = execution::operation_t<nth_sender<Index>,
+					receiver<Index, InlinePath>>;
 			auto s = self_; // following lines will destruct this.
-			auto op = reinterpret_cast<operation_type *>(s->box_.buffer);
+			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
 			op->~operation_type();
 
-			execution::set_value(s->dr_);
+			// Leave the inline path.
+			s->template do_step<Index + 1, false>();
+		}
+
+		void set_value_inline()
+				requires ((Index == sizeof...(Senders) - 1)
+						&& (std::is_same_v<value_type, void>)) {
+			using operation_type = execution::operation_t<nth_sender<Index>,
+					receiver<Index, InlinePath>>;
+			auto s = self_; // following lines will destruct this.
+			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
+			op->~operation_type();
+
+			if(InlinePath) {
+				execution::set_value_inline(s->dr_);
+			}else{
+				execution::set_value_noinline(s->dr_);
+			}
+		}
+
+		void set_value_noinline()
+				requires ((Index == sizeof...(Senders) - 1)
+						&& (std::is_same_v<value_type, void>)) {
+			using operation_type = execution::operation_t<nth_sender<Index>,
+					receiver<Index, InlinePath>>;
+			auto s = self_; // following lines will destruct this.
+			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
+			op->~operation_type();
+
+			execution::set_value_noinline(s->dr_);
 		}
 
 		template <typename T>
-		void set_value(T value)
+		void set_value_inline(T value)
 				requires ((Index == sizeof...(Senders) - 1)
 						&& (!std::is_same_v<value_type, void>)
 						&& (std::is_same_v<value_type, T>)) {
-			using operation_type = execution::operation_t<nth_sender<Index>, receiver<Index>>;
+			using operation_type = execution::operation_t<nth_sender<Index>,
+					receiver<Index, InlinePath>>;
 			auto s = self_; // following lines will destruct this.
-			auto op = reinterpret_cast<operation_type *>(s->box_.buffer);
+			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
 			op->~operation_type();
 
-			execution::set_value(s->dr_, std::move(value));
+			if(InlinePath) {
+				execution::set_value_inline(s->dr_, std::move(value));
+			}else{
+				execution::set_value_noinline(s->dr_, std::move(value));
+			}
+		}
+
+		template <typename T>
+		void set_value_noinline(T value)
+				requires ((Index == sizeof...(Senders) - 1)
+						&& (!std::is_same_v<value_type, void>)
+						&& (std::is_same_v<value_type, T>)) {
+			using operation_type = execution::operation_t<nth_sender<Index>,
+					receiver<Index, InlinePath>>;
+			auto s = self_; // following lines will destruct this.
+			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
+			op->~operation_type();
+
+			execution::set_value_noinline(s->dr_, std::move(value));
 		}
 
 	private:
@@ -502,11 +579,13 @@ private:
 	R dr_; // Downstream receiver.
 
 	static constexpr size_t max_operation_size = []<size_t ...I>(std::index_sequence<I...>) {
-		return std::max({sizeof(execution::operation_t<nth_sender<I>, receiver<I>>)...});
+		return std::max({sizeof(execution::operation_t<nth_sender<I>, receiver<I, true>>)...,
+				sizeof(execution::operation_t<nth_sender<I>, receiver<I, false>>)...});
 	}(std::make_index_sequence<sizeof...(Senders)>{});
 
 	static constexpr size_t max_operation_alignment = []<size_t ...I>(std::index_sequence<I...>) {
-		return std::max({alignof(execution::operation_t<nth_sender<I>, receiver<I>>)...});
+		return std::max({alignof(execution::operation_t<nth_sender<I>, receiver<I, true>>)...,
+			alignof(execution::operation_t<nth_sender<I>, receiver<I, false>>)...});
 	}(std::make_index_sequence<sizeof...(Senders)>{});
 
 	frg::aligned_storage<max_operation_size, max_operation_alignment> box_;
