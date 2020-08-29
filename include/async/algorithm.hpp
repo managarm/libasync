@@ -421,7 +421,7 @@ struct [[nodiscard]] sequence_operation {
 
 private:
 	template <size_t Index>
-	using nth_sender = std::tuple_element_t<Index, std::tuple<Senders...>>;
+	using nth_sender = std::tuple_element_t<Index, frg::tuple<Senders...>>;
 
 	template <size_t Index>
 	void do_step() {
@@ -495,7 +495,7 @@ private:
 
 template <typename ...Senders> requires (sizeof...(Senders) > 0)
 struct [[nodiscard]] sequence_sender {
-	using value_type = typename std::tuple_element_t<sizeof...(Senders) - 1, std::tuple<Senders...>>::value_type;
+	using value_type = typename std::tuple_element_t<sizeof...(Senders) - 1, frg::tuple<Senders...>>::value_type;
 
 	template<typename Receiver>
 	friend sequence_operation<Receiver, Senders...>
