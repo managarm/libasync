@@ -615,4 +615,93 @@ operator co_await(sequence_sender<Senders...> s) {
 	return {std::move(s)};
 }
 
+//---------------------------------------------------------------------------------------
+// when_all()
+//---------------------------------------------------------------------------------------
+
+template<typename Receiver, typename... Senders>
+struct when_all_operation {
+private:
+	struct receiver {
+		receiver(when_all_operation *self)
+		: self_{self} { }
+
+		void set_value_inline() {
+			// Simply do nothing.
+		}
+
+		void set_value_noinline() {
+			auto c = self_->ctr_.fetch_sub(1, std::memory_order_acq_rel);
+			assert(c > 0);
+			if(c == 1)
+				execution::set_value_noinline(self_->dr_);
+		}
+
+	private:
+		when_all_operation *self_;
+	};
+
+	template<size_t... Is>
+	auto make_operations_tuple(std::index_sequence<Is...>, frg::tuple<Senders...> senders) {
+		return frg::make_tuple(
+			make_connect_helper(
+				std::move(senders.template get<Is>()),
+				receiver{this}
+			)...
+		);
+	}
+
+public:
+	when_all_operation(frg::tuple<Senders...> senders, Receiver dr)
+	: dr_{std::move(dr)},
+		ops_{make_operations_tuple(std::index_sequence_for<Senders...>{}, std::move(senders))},
+		ctr_{sizeof...(Senders)} { }
+
+	bool start_inline() {
+		int n_fast = 0;
+		[&]<size_t... Is> (std::index_sequence<Is...>) {
+			([&] <size_t I> {
+				if(execution::start_inline(ops_.template get<I>()))
+					++n_fast;
+			}.template operator()<Is>(), ...);
+		}(std::index_sequence_for<Senders...>{});
+
+		auto c = ctr_.fetch_sub(n_fast, std::memory_order_acq_rel);
+		assert(c > 0);
+		if(c == n_fast) {
+			execution::set_value_inline(dr_);
+			return true;
+		}
+		return false;
+	}
+
+	Receiver dr_; // Downstream receiver.
+	frg::tuple<execution::operation_t<Senders, receiver>...> ops_;
+	std::atomic<int> ctr_;
+};
+
+template <typename ...Senders> requires (sizeof...(Senders) > 0)
+struct [[nodiscard]] when_all_sender {
+	using value_type = void;
+
+	template<typename Receiver>
+	friend when_all_operation<Receiver, Senders...>
+	connect(when_all_sender s, Receiver r) {
+		return {std::move(s.senders), std::move(r)};
+	}
+
+	frg::tuple<Senders...> senders;
+};
+
+template <typename ...Senders> requires (sizeof...(Senders) > 0)
+when_all_sender<Senders...> when_all(Senders ...senders) {
+	return {frg::tuple<Senders...>{std::move(senders)...}};
+}
+
+template <typename ...Senders>
+sender_awaiter<when_all_sender<Senders...>>
+operator co_await(when_all_sender<Senders...> s) {
+	return {std::move(s)};
+}
+
 } // namespace async
