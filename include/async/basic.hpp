@@ -763,6 +763,9 @@ private:
 		null, ready, retired
 	};
 
+protected:
+	virtual ~awaitable_base() = default;
+
 public:
 	awaitable_base();
 
