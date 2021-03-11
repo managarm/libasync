@@ -163,20 +163,20 @@ namespace detail {
 
 		auto initial_suspend() { return corons::suspend_always{}; }
 
-		auto final_suspend() {
+		auto final_suspend() noexcept {
 			struct awaiter {
 				awaiter(result_promise *p)
 				: _p{p} { }
 
-				bool await_ready() {
+				bool await_ready() noexcept {
 					return false;
 				}
 
-				void await_suspend(corons::coroutine_handle<>) {
+				void await_suspend(corons::coroutine_handle<>) noexcept {
 					_p->set_ready();
 				}
 
-				void await_resume() {
+				void await_resume() noexcept {
 					platform::panic("libasync: Internal fatal error:"
 							" Coroutine resumed from final suspension point");
 				}
@@ -224,20 +224,20 @@ namespace detail {
 
 		auto initial_suspend() { return corons::suspend_always{}; }
 
-		auto final_suspend() {
+		auto final_suspend() noexcept {
 			struct awaiter {
 				awaiter(result_promise *p)
 				: _p{p} { }
 
-				bool await_ready() {
+				bool await_ready() noexcept {
 					return false;
 				}
 
-				void await_suspend(corons::coroutine_handle<>) {
+				void await_suspend(corons::coroutine_handle<>) noexcept {
 					_p->set_ready();
 				}
 
-				void await_resume() {
+				void await_resume() noexcept {
 					platform::panic("libasync: Internal fatal error:"
 							" Coroutine resumed from final suspension point");
 				}
