@@ -18,7 +18,7 @@ private:
 		friend struct queue;
 
 	protected:
-		~sink() = default;
+		virtual ~sink() = default;
 
 	public:
 		virtual void consume(T object) = 0;

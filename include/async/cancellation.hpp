@@ -9,7 +9,7 @@ struct abstract_cancellation_callback {
 	friend struct cancellation_event;
 
 protected:
-	~abstract_cancellation_callback() = default;
+	virtual ~abstract_cancellation_callback() = default;
 
 private:
 	virtual void call() = 0;

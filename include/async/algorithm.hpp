@@ -660,7 +660,7 @@ public:
 	bool start_inline() {
 		int n_fast = 0;
 		[&]<size_t... Is> (std::index_sequence<Is...>) {
-			([&] <size_t I> {
+			([&] <size_t I> () {
 				if(execution::start_inline(ops_.template get<I>()))
 					++n_fast;
 			}.template operator()<Is>(), ...);
