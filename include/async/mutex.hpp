@@ -33,15 +33,17 @@ namespace detail {
 			: self_{self}, receiver_{std::move(receiver)} { }
 
 			bool start() {
-				frg::unique_lock lock(self_->mutex_);
+				{
+					frg::unique_lock lock(self_->mutex_);
 
-				if(!self_->locked_) {
-					// Fast path.
-					self_->locked_ = true;
-				}else{
-					// Slow path.
-					self_->waiters_.push_back(this);
-					return false;
+					if(!self_->locked_) {
+						// Fast path.
+						self_->locked_ = true;
+					}else{
+						// Slow path.
+						self_->waiters_.push_back(this);
+						return false;
+					}
 				}
 
 				execution::set_value_inline(receiver_);
