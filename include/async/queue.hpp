@@ -21,7 +21,12 @@ private:
 		virtual ~sink() = default;
 
 	public:
-		virtual void consume(T object) = 0;
+		virtual void cancel() = 0;
+		virtual void complete() = 0;
+
+	protected:
+		cancellation_observer<frg::bound_mem_fn<&sink::cancel>> cobs{this};
+		frg::optional<T> value;
 
 	private:
 		frg::default_list_hook<sink> hook_;
@@ -34,13 +39,23 @@ public:
 
 	template<typename... Ts>
 	void emplace(Ts&&... arg) {
-		if(!sinks_.empty()) {
-			assert(buffer_.empty());
-			auto sp = sinks_.pop_front();
-			sp->consume(T(std::forward<Ts>(arg)...));
-		}else{
-			buffer_.emplace_back(std::forward<Ts>(arg)...);
+		sink *retire_sp = nullptr;
+		{
+			frg::unique_lock lock{mutex_};
+
+			if(!sinks_.empty()) {
+				assert(buffer_.empty());
+				auto sp = sinks_.pop_front();
+				sp->value.emplace(std::forward<Ts>(arg)...);
+				if(sp->cobs.try_reset())
+					retire_sp = sp;
+			}else{
+				buffer_.emplace_back(std::forward<Ts>(arg)...);
+			}
 		}
+
+		if(retire_sp)
+			retire_sp->complete();
 	}
 
 	// ----------------------------------------------------------------------------------
@@ -50,47 +65,59 @@ public:
 	template<typename Receiver>
 	struct get_operation final : private sink {
 		get_operation(queue *q, cancellation_token ct, Receiver r)
-		: q_{q}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
+		: q_{q}, ct_{std::move(ct)}, r_{std::move(r)} { }
 
-		void start() {
-			if(!q_->buffer_.empty()) {
-				assert(q_->sinks_.empty());
-				auto object = std::move(q_->buffer_.front());
-				q_->buffer_.pop_front();
-				execution::set_value(r_, std::move(object));
-			}else{
-				if(!cobs_.try_set(ct_)) {
-					execution::set_value(r_, frg::null_opt);
+		bool start_inline() {
+			bool retire = false;
+			{
+				frg::unique_lock lock{q_->mutex_};
+
+				if(!q_->buffer_.empty()) {
+					assert(q_->sinks_.empty());
+					value = std::move(q_->buffer_.front());
+					q_->buffer_.pop_front();
+					retire = true;
 				}else{
-					q_->sinks_.push_back(this);
+					if(!cobs.try_set(ct_)) {
+						retire = true;
+					}else{
+						q_->sinks_.push_back(this);
+					}
 				}
 			}
+
+			if(retire) {
+				execution::set_value_inline(r_, std::move(value));
+				return true;
+			}
+			return false;
 		}
 
 	private:
-		void cancel() {
-			if(value_) {
-				execution::set_value(r_, std::move(value_));
-			}else{
-				auto it = q_->sinks_.iterator_to(this);
-				q_->sinks_.erase(it);
-				execution::set_value(r_, frg::null_opt);
+		using sink::cobs;
+		using sink::value;
+
+		void cancel() override {
+			{
+				frg::unique_lock lock{q_->mutex_};
+
+				// We either have a value, or we are not part of the list anymore.
+				if(!value) {
+					auto it = q_->sinks_.iterator_to(this);
+					q_->sinks_.erase(it);
+				}
 			}
+
+			execution::set_value_noinline(r_, std::move(value));
 		}
 
-		void consume(T object) override {
-			if(cobs_.try_reset()) {
-				execution::set_value(r_, std::move(object));
-			}else{
-				value_ = std::move(object);
-			}
+		void complete() override {
+			execution::set_value_noinline(r_, std::move(value));
 		}
 
 		queue *q_;
 		cancellation_token ct_;
 		Receiver r_;
-		cancellation_observer<frg::bound_mem_fn<&get_operation::cancel>> cobs_;
-		frg::optional<T> value_;
 	};
 
 	struct get_sender {
@@ -113,7 +140,19 @@ public:
 		return {this, ct};
 	}
 
+	frg::optional<T> maybe_get() {
+		frg::unique_lock lock{mutex_};
+
+		if(buffer_.empty())
+			return {};
+		auto object = std::move(buffer_.front());
+		buffer_.pop_front();
+		return object;
+	}
+
 private:
+	platform::mutex mutex_;
+
 	frg::list<T, Allocator> buffer_;
 
 	frg::intrusive_list<
