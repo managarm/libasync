@@ -258,6 +258,8 @@ private:
 };
 
 struct suspend_indefinitely_sender {
+	using value_type = void;
+
 	cancellation_token cancellation;
 };
 
