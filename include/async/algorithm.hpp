@@ -300,7 +300,12 @@ private:
 		internal_receiver(race_and_cancel_operation *self)
 		: self_{self} { }
 
-		void set_value() {
+		// TODO: properly support inline completion.
+		void set_value_inline() {
+			set_value_noinline();
+		}
+
+		void set_value_noinline() {
 			auto n = self_->n_done_.fetch_add(1, std::memory_order_acq_rel);
 			if(!n) {
 				for(unsigned int j = 0; j < sizeof...(Is); ++j)
@@ -340,7 +345,7 @@ public:
 	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_done_{0} { }
 
 	void start() {
-		(execution::start(ops_.template get<Is>()), ...);
+		(execution::start_inline(ops_.template get<Is>()), ...);
 	}
 
 private:
@@ -382,10 +387,10 @@ struct let_operation {
 	}
 
 public:
-	void start() {
+	bool start_inline() {
 		imm_ = std::move(pred_());
 		op_.construct_with([&]{ return execution::connect(func_(imm_), std::move(r_)); });
-		execution::start(*op_);
+		return execution::start_inline(*op_);
 	}
 
 private:

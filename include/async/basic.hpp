@@ -83,7 +83,11 @@ template<typename S>
 struct [[nodiscard]] sender_awaiter<S, void> {
 private:
 	struct receiver {
-		void set_value() {
+		void set_value_inline() {
+			// Do nothing.
+		}
+
+		void set_value_noinline() {
 			p_->h_.resume();
 		}
 
@@ -99,9 +103,9 @@ public:
 		return false;
 	}
 
-	void await_suspend(corons::coroutine_handle<> h) {
+	bool await_suspend(corons::coroutine_handle<> h) {
 		h_ = h;
-		execution::start(operation_);
+		return !execution::start_inline(operation_);
 	}
 
 	void await_resume() {
@@ -302,7 +306,8 @@ run(Sender s, RunToken rt) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	execution::start(operation);
+	if(execution::start_inline(operation))
+		return;
 
 	while(!st.done) {
 		assert(!rt.is_drained());
@@ -335,7 +340,8 @@ run(Sender s, RunToken rt) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	execution::start(operation);
+	if(execution::start_inline(operation))
+		return std::move(*st.value);
 
 	while(!st.done) {
 		assert(!rt.is_drained());
@@ -366,7 +372,8 @@ run(Sender s, RunToken rt, IoService ios) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	execution::start(operation);
+	if(execution::start_inline(operation))
+		return;
 
 	while(!st.done) {
 		rt.run_iteration();
@@ -404,7 +411,8 @@ run(Sender s, RunToken rt, IoService ios) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	execution::start(operation);
+	if(execution::start_inline(operation))
+		return std::move(*st.value);
 
 	while(!st.done) {
 		rt.run_iteration();
@@ -541,7 +549,7 @@ struct yield_operation {
 	yield_operation(yield_sender s, Receiver r)
 	: q_{s.q}, r_{std::move(r)} {
 		_rqi.arm([this] {
-			r_.set_value();
+			async::execution::set_value(r_);
 		});
 	}
 
@@ -695,7 +703,7 @@ template<typename Allocator, typename S>
 void detach_with_allocator(Allocator allocator, S sender) {
 	auto p = frg::construct<detach_details_::control_block<Allocator, S>>(allocator,
 			allocator, std::move(sender));
-	execution::start(p->operation);
+	execution::start_inline(p->operation);
 }
 
 namespace spawn_details_ {
@@ -745,7 +753,7 @@ template<typename Allocator, typename S, typename R>
 void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
 	auto p = frg::construct<spawn_details_::control_block<Allocator, S, R>>(allocator,
 			allocator, std::move(sender), std::move(receiver));
-	execution::start(p->operation);
+	execution::start_inline(p->operation);
 }
 
 // ----------------------------------------------------------------------------

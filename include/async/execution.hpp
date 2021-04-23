@@ -60,21 +60,6 @@ namespace cpo_types {
 	template<typename Op>
 	constexpr bool has_global_start_v = is_detected_v<global_start_t, Op>;
 
-	struct start_cpo {
-        template<typename Operation>
-        void operator() (Operation &&op) const {
-            if constexpr (has_start_member_v<Operation>)
-				op.start();
-            else if constexpr (has_global_start_v<Operation>)
-				start(std::forward<Operation>(op));
-			else if constexpr (requires { op.start_inline(); })
-				op.start_inline();
-			else
-				static_assert(dependent_false_t<Operation>,
-						"No start() customization defined for operation type");
-        }
-	};
-
 	struct start_inline_cpo {
 		template<typename Operation>
 		bool operator() (Operation &&op) const {
@@ -171,7 +156,6 @@ namespace execution {
     using operation_t = std::invoke_result_t<cpo_types::connect_cpo, S, R>;
 
 	inline cpo_types::connect_cpo connect;
-	inline cpo_types::start_cpo start;
 	inline cpo_types::start_inline_cpo start_inline;
 	inline cpo_types::set_value_cpo set_value;
 	inline cpo_types::set_value_inline_cpo set_value_inline;
