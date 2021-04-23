@@ -32,7 +32,7 @@ namespace detail {
 			lock_operation(mutex *self, R receiver)
 			: self_{self}, receiver_{std::move(receiver)} { }
 
-			bool start() {
+			bool start_inline() {
 				{
 					frg::unique_lock lock(self_->mutex_);
 
