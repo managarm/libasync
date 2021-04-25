@@ -184,6 +184,76 @@ transform_sender<Sender, F> transform(Sender ds, F f) {
 }
 
 //---------------------------------------------------------------------------------------
+// ite()
+//---------------------------------------------------------------------------------------
+
+template<typename C, typename ST, typename SE, typename R>
+struct [[nodiscard]] ite_operation {
+	ite_operation(C cond, ST then_s, SE else_s, R dr)
+	: cond_{std::move(cond)}, then_s_{std::move(then_s)}, else_s_{std::move(else_s)},
+			dr_{std::move(dr)} { }
+
+	ite_operation(const ite_operation &) = delete;
+
+	ite_operation &operator= (const ite_operation &) = delete;
+
+	~ite_operation() {
+		if(then_op_.valid())
+			then_op_.destruct();
+		if(else_op_.valid())
+			else_op_.destruct();
+		}
+
+	bool start_inline() {
+		if(cond_()) {
+			then_op_.construct_with([&] {
+				return execution::connect(std::move(then_s_), std::move(dr_));
+			});
+			return execution::start_inline(*then_op_);
+		}else{
+			else_op_.construct_with([&] {
+				return execution::connect(std::move(else_s_), std::move(dr_));
+			});
+			return execution::start_inline(*else_op_);
+		}
+	}
+
+	C cond_;
+	ST then_s_;
+	SE else_s_;
+	R dr_;
+	frg::manual_box<execution::operation_t<ST, R>> then_op_;
+	frg::manual_box<execution::operation_t<SE, R>> else_op_;
+};
+
+template<typename C, typename ST, typename SE>
+struct [[nodiscard]] ite_sender {
+	using value_type = typename ST::value_type;
+
+	ite_sender(C cond, ST then_s, SE else_s)
+	: cond_{std::move(cond)}, then_s_{std::move(then_s)}, else_s_{std::move(else_s)} { }
+
+	template<typename R>
+	ite_operation<C, ST, SE, R> connect(R dr) {
+		return {std::move(cond_), std::move(then_s_), std::move(else_s_), std::move(dr)};
+	}
+
+	sender_awaiter<ite_sender, value_type> operator co_await () {
+		return {std::move(*this)};
+	}
+
+private:
+	C cond_;
+	ST then_s_;
+	SE else_s_;
+};
+
+template<typename C, typename ST, typename SE>
+ite_sender<C, ST, SE> ite(C cond, ST then_s, SE else_s) {
+	return {std::move(cond), std::move(then_s), std::move(else_s)};
+}
+
+//---------------------------------------------------------------------------------------
 // repeat_while()
 //---------------------------------------------------------------------------------------
 
