@@ -14,7 +14,7 @@ struct connect_helper {
 	using operation = execution::operation_t<Sender, Receiver>;
 
 	operator operation () {
-		return connect(std::move(s), std::move(r));
+		return execution::connect(std::move(s), std::move(r));
 	}
 
 	Sender s;
