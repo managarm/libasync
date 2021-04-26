@@ -600,11 +600,11 @@ struct detached {
 		};
 
 		struct final_awaiter {
-			bool await_ready() {
+			bool await_ready() noexcept {
 				return false;
 			}
 
-			void await_suspend(corons::coroutine_handle<> h) {
+			void await_suspend(corons::coroutine_handle<> h) noexcept {
 				// Calling h.destroy() here causes the code to break.
 				// TODO: Is this a LLVM bug? Workaround: Defer it to a run_queue.
 				_rt.arm(_rm, [address = h.address()] {
@@ -614,7 +614,7 @@ struct detached {
 				_rt.post(_rm);
 			}
 
-			void await_resume() {
+			void await_resume() noexcept {
 				platform::panic("libasync: Internal fatal error:"
 						" Coroutine resumed from final suspension point");
 			}
@@ -632,7 +632,7 @@ struct detached {
 			return {};
 		}
 
-		final_awaiter final_suspend() {
+		final_awaiter final_suspend() noexcept {
 			return {};
 		}
 
