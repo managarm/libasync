@@ -7,6 +7,7 @@
 #include <frg/list.hpp>
 #include <frg/optional.hpp>
 #include <frg/mutex.hpp>
+#include <frg/eternal.hpp>
 
 #ifndef LIBASYNC_CUSTOM_PLATFORM
 #include <mutex>
@@ -175,7 +176,7 @@ struct callback;
 template<typename R, typename... Args>
 struct callback<R(Args...)> {
 private:
-	using storage = std::aligned_storage_t<sizeof(void *), alignof(void *)>;
+	using storage = frg::aligned_storage<sizeof(void *), alignof(void *)>;
 
 	template<typename F>
 	static R invoke(storage object, Args... args) {
@@ -205,7 +206,7 @@ public:
 
 private:
 	R (*_function)(storage, Args...);
-	std::aligned_storage_t<sizeof(void *), alignof(void *)> _object;
+	frg::aligned_storage<sizeof(void *), alignof(void *)> _object;
 };
 
 // ----------------------------------------------------------------------------
