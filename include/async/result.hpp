@@ -273,10 +273,11 @@ namespace detail {
 
 		result_operation &operator= (const result_operation &) = delete;
 
-		void start() {
+		bool start_inline() {
 			res_.then([this] () {
-				execution::set_value(rcv_, std::move(res_.value()));
+				execution::set_value_noinline(rcv_, std::move(res_.value()));
 			});
+			return false;
 		}
 
 	private:
@@ -293,10 +294,11 @@ namespace detail {
 
 		result_operation &operator= (const result_operation &) = delete;
 
-		void start() {
+		bool start_inline() {
 			res_.then([this] {
-				execution::set_value(rcv_);
+				execution::set_value_noinline(rcv_);
 			});
+			return false;
 		}
 
 	private:

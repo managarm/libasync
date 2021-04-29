@@ -81,73 +81,73 @@ namespace cpo_types {
 
 	struct set_value_cpo {
 		template<typename Receiver, typename T>
+		requires
+			requires(Receiver &&r, T &&value) { r.set_value_noinline(std::forward<T>(value)); }
 		void operator() (Receiver &&r, T &&value) {
-			if constexpr (requires { r.set_value(std::forward<T>(value)); })
-				r.set_value(std::forward<T>(value));
-			else if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
+			if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
 				r.set_value_noinline(std::forward<T>(value));
 			else
-				static_assert(dependent_false_t<Receiver>,
-						"No set_value() customization defined for receiver type");
+				// This should have been caught by the concept.
+				static_assert(dependent_false_t<Receiver>);
 		}
 
 		template<typename Receiver>
+		requires
+			requires(Receiver &&r) { r.set_value_noinline(); }
 		void operator() (Receiver &&r) {
-			if constexpr (requires { r.set_value(); })
-				r.set_value();
-			else if constexpr (requires { r.set_value_noinline(); })
+			if constexpr (requires { r.set_value_noinline(); })
 				r.set_value_noinline();
 			else
-				static_assert(dependent_false_t<Receiver>,
-						"No set_value() customization defined for receiver type");
+				// This should have been caught by the concept.
+				static_assert(dependent_false_t<Receiver>);
 		}
 	};
 
 	struct set_value_inline_cpo {
 		template<typename Receiver, typename T>
+		requires
+			requires(Receiver &&r, T &&value) { r.set_value_inline(std::forward<T>(value)); }
 		void operator() (Receiver &&r, T &&value) {
 			if constexpr (requires { r.set_value_inline(std::forward<T>(value)); })
 				r.set_value_inline(std::forward<T>(value));
-			else if constexpr (requires { r.set_value(std::forward<T>(value)); })
-				r.set_value(std::forward<T>(value));
 			else
-				static_assert(dependent_false_t<Receiver>,
-						"No set_value_inline() customization defined for receiver type");
+				// This should have been caught by the concept.
+				static_assert(dependent_false_t<Receiver>);
 		}
 
 		template<typename Receiver>
+		requires
+			requires(Receiver &&r) { r.set_value_inline(); }
 		void operator() (Receiver &&r) {
 			if constexpr (requires { r.set_value_inline(); })
 				r.set_value_inline();
-			else if constexpr (requires { r.set_value(); })
-				r.set_value();
 			else
-				static_assert(dependent_false_t<Receiver>,
-						"No set_value_inline() customization defined for receiver type");
+				// This should have been caught by the concept.
+				static_assert(dependent_false_t<Receiver>);
 		}
 	};
 
 	struct set_value_noinline_cpo {
 		template<typename Receiver, typename T>
+		requires
+			requires(Receiver &&r, T &&value) { r.set_value_noinline(std::forward<T>(value)); }
 		void operator() (Receiver &&r, T &&value) {
 			if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
 				r.set_value_noinline(std::forward<T>(value));
-			else if constexpr (requires { r.set_value(std::forward<T>(value)); })
-				r.set_value(std::forward<T>(value));
 			else
-				static_assert(dependent_false_t<Receiver>,
-						"No set_value_noinline() customization defined for receiver type");
+				// This should have been caught by the concept.
+				static_assert(dependent_false_t<Receiver>);
 		}
 
 		template<typename Receiver>
+		requires
+			requires(Receiver &&r) { r.set_value_noinline(); }
 		void operator() (Receiver &&r) {
 			if constexpr (requires { r.set_value_noinline(); })
 				r.set_value_noinline();
-			else if constexpr (requires { r.set_value(); })
-				r.set_value();
 			else
-				static_assert(dependent_false_t<Receiver>,
-						"No set_value_noinline() customization defined for receiver type");
+				// This should have been caught by the concept.
+				static_assert(dependent_false_t<Receiver>);
 		}
 	};
 }

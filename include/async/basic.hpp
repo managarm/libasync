@@ -121,6 +121,10 @@ public:
 // any_receiver<T>.
 // ----------------------------------------------------------------------------
 
+// This form of any_receiver is a broken concept: because it directly forwards
+// the value of the set_value() function, it requires a virtual call even
+// if we add an inline return path.
+
 template<typename T>
 struct any_receiver {
 	template<typename R>
@@ -132,11 +136,15 @@ struct any_receiver {
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p, T value) {
 			auto *rp = static_cast<R *>(p);
-			execution::set_value(*rp, std::move(value));
+			execution::set_value_noinline(*rp, std::move(value));
 		};
 	}
 
 	void set_value(T value) {
+		set_value_fptr_(stor_, std::move(value));
+	}
+
+	void set_value_noinline(T value) {
 		set_value_fptr_(stor_, std::move(value));
 	}
 
@@ -153,11 +161,15 @@ struct any_receiver<void> {
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p) {
 			auto *rp = static_cast<R *>(p);
-			execution::set_value(*rp);
+			execution::set_value_noinline(*rp);
 		};
 	}
 
 	void set_value() {
+		set_value_fptr_(stor_);
+	}
+
+	void set_value_noinline() {
 		set_value_fptr_(stor_);
 	}
 
@@ -296,7 +308,11 @@ run(Sender s, RunToken rt) {
 		receiver(state *stp)
 		: stp_{stp} { }
 
-		void set_value() {
+		void set_value_inline() {
+			stp_->done = true;
+		}
+
+		void set_value_noinline() {
 			stp_->done = true;
 		}
 
@@ -329,7 +345,12 @@ run(Sender s, RunToken rt) {
 		receiver(state *stp)
 		: stp_{stp} { }
 
-		void set_value(typename Sender::value_type value) {
+		void set_value_inline(typename Sender::value_type value) {
+			stp_->value.emplace(std::move(value));
+			stp_->done = true;
+		}
+
+		void set_value_noinline(typename Sender::value_type value) {
 			stp_->value.emplace(std::move(value));
 			stp_->done = true;
 		}
@@ -362,7 +383,11 @@ run(Sender s, RunToken rt, IoService ios) {
 		receiver(state *stp)
 		: stp_{stp} { }
 
-		void set_value() {
+		void set_value_inline() {
+			stp_->done = true;
+		}
+
+		void set_value_noinline() {
 			stp_->done = true;
 		}
 
@@ -400,7 +425,12 @@ run(Sender s, RunToken rt, IoService ios) {
 		receiver(state *stp)
 		: stp_{stp} { }
 
-		void set_value(typename Sender::value_type value) {
+		void set_value_inline(typename Sender::value_type value) {
+			stp_->value.emplace(std::move(value));
+			stp_->done = true;
+		}
+
+		void set_value_noinline(typename Sender::value_type value) {
 			stp_->value.emplace(std::move(value));
 			stp_->done = true;
 		}
@@ -550,12 +580,13 @@ struct yield_operation {
 	yield_operation(yield_sender s, Receiver r)
 	: q_{s.q}, r_{std::move(r)} {
 		_rqi.arm([this] {
-			async::execution::set_value(r_);
+			async::execution::set_value_noinline(r_);
 		});
 	}
 
-	void start() {
+	bool start_inline() {
 		q_->post(&_rqi);
+		return false;
 	}
 
 private:
@@ -672,7 +703,11 @@ namespace detach_details_ {
 		final_receiver(control_block<Allocator, S> *cb)
 		: cb_{cb} { }
 
-		void set_value() {
+		void set_value_inline() {
+			finalize(cb_);
+		}
+
+		void set_value_noinline() {
 			finalize(cb_);
 		}
 
@@ -720,8 +755,14 @@ namespace spawn_details_ {
 		: cb_{cb} { }
 
 		template<typename... Args>
-		void set_value(Args &&... args) {
-			cb_->dr.set_value(std::forward<Args>(args)...);
+		void set_value_inline(Args &&... args) {
+			cb_->dr.set_value_inline(std::forward<Args>(args)...);
+			finalize(cb_);
+		}
+
+		template<typename... Args>
+		void set_value_noinline(Args &&... args) {
+			cb_->dr.set_value_noinline(std::forward<Args>(args)...);
 			finalize(cb_);
 		}
 
