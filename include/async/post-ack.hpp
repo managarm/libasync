@@ -37,6 +37,9 @@ private:
 		// These following fields are protected by the mechanism's mutex_.
 		frg::default_list_hook<node> hook;
 		T object;
+
+	protected:
+		~node() = default;
 	};
 
 	struct poll_node {
@@ -46,11 +49,14 @@ private:
 		bool pending = false;
 		node *nd = nullptr;
 		frg::default_list_hook<poll_node> hook;
+
+	protected:
+		~poll_node() = default;
 	};
 
 public:
 	template<typename R>
-	struct [[nodiscard]] post_operation : private node {
+	struct [[nodiscard]] post_operation final : private node {
 		post_operation(post_ack_mechanism *mech, T object, R receiver)
 		: mech_{mech}, receiver_{std::move(receiver)} {
 			node::object = std::move(object);
@@ -279,7 +285,7 @@ public:
 	}
 
 	template<typename R>
-	struct [[nodiscard]] poll_operation : private poll_node {
+	struct [[nodiscard]] poll_operation final : private poll_node {
 	private:
 		using poll_node::pending;
 		using poll_node::nd;

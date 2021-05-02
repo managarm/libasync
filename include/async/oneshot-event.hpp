@@ -19,6 +19,9 @@ private:
 
 		virtual void complete() = 0;
 
+	protected:
+		~node() = default;
+
 	private:
 		// Protected by mutex_.
 		frg::default_list_hook<node> _hook;
