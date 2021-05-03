@@ -4,7 +4,6 @@
 #include <deque>
 
 #include <async/result.hpp>
-#include <async/doorbell.hpp>
 #include <frg/list.hpp>
 
 namespace async {

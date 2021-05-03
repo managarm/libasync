@@ -1,6 +1,5 @@
 #include <new>
 
-#include <async/doorbell.hpp>
 #include <async/queue.hpp>
 #include <async/result.hpp>
 #include <async/algorithm.hpp>
