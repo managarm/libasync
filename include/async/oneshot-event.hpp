@@ -63,7 +63,7 @@ public:
 		wait_operation(oneshot_event *evt, cancellation_token ct, Receiver r)
 		: evt_{evt}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
 
-		void start() {
+		bool start_inline() {
 			bool cancelled = false;
 			{
 				frg::unique_lock lock(evt_->mutex_);
@@ -73,12 +73,13 @@ public:
 						cancelled = true;
 					}else{
 						evt_->queue_.push_back(this);
-						return;
+						return false;
 					}
 				}
 			}
 
-			execution::set_value(r_, !cancelled);
+			execution::set_value_inline(r_, !cancelled);
+			return true;
 		}
 
 	private:
@@ -94,12 +95,12 @@ public:
 				}
 			}
 
-			execution::set_value(r_, !cancelled_);
+			execution::set_value_noinline(r_, !cancelled_);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset())
-				execution::set_value(r_, true);
+				execution::set_value_noinline(r_, true);
 		}
 
 		oneshot_event *evt_;
