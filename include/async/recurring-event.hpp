@@ -165,6 +165,13 @@ public:
 		return {this, std::move(cond), ct};
 	}
 
+	// Wait without checking for a condition. This is only really useful in single-threaded
+	// code, or when wakeup may be missed without causing confusion.
+	auto async_wait(cancellation_token ct = {}) {
+		auto c = [] () -> bool { return true; };
+		return wait_if_sender<decltype(c)>{this, c, ct};
+	}
+
 private:
 	platform::mutex _mutex;
 
