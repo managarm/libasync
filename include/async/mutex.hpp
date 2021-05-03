@@ -18,6 +18,9 @@ namespace detail {
 			virtual void complete() = 0;
 
 			frg::default_list_hook<node> hook;
+
+		protected:
+			~node() = default;
 		};
 
 	public:
@@ -28,7 +31,7 @@ namespace detail {
 		// ------------------------------------------------------------------------------
 
 		template<typename R>
-		struct [[nodiscard]] lock_operation : private node {
+		struct [[nodiscard]] lock_operation final : private node {
 			lock_operation(mutex *self, R receiver)
 			: self_{self}, receiver_{std::move(receiver)} { }
 
