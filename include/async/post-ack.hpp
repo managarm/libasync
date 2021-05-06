@@ -63,40 +63,47 @@ public:
 		}
 
 		bool start_inline() {
-			frg::intrusive_list<
-				poll_node,
-				frg::locate_member<
+			auto fast_path = [&] {
+				frg::intrusive_list<
 					poll_node,
-					frg::default_list_hook<poll_node>,
-					&poll_node::hook
-				>
-			> poll_pending;
-			{
-				frg::unique_lock lock(mech_->mutex_);
+					frg::locate_member<
+						poll_node,
+						frg::default_list_hook<poll_node>,
+						&poll_node::hook
+					>
+				> poll_pending;
+				{
+					frg::unique_lock lock(mech_->mutex_);
 
-				node::node_seq = mech_->post_seq_++;
+					node::node_seq = mech_->post_seq_++;
 
-				if(!mech_->active_agents_) {
-					assert(mech_->poll_queue_.empty()); // Otherwise, the should be an agent.
-					execution::set_value_noinline(receiver_);
-					return true;
+					if(!mech_->active_agents_) {
+						assert(mech_->poll_queue_.empty()); // Otherwise, the should be an agent.
+						return true;
+					}
+
+					node::acks_left.store(mech_->active_agents_, std::memory_order_relaxed);
+					mech_->queue_.push_back(this);
+					while(!mech_->poll_queue_.empty()) {
+						auto pn = mech_->poll_queue_.pop_front();
+						assert(!pn->pending);
+						assert(!pn->nd);
+						pn->pending = true;
+						pn->nd = this;
+						poll_pending.push_back(pn);
+					}
 				}
 
-				node::acks_left.store(mech_->active_agents_, std::memory_order_relaxed);
-				mech_->queue_.push_back(this);
-				while(!mech_->poll_queue_.empty()) {
-					auto pn = mech_->poll_queue_.pop_front();
-					assert(!pn->pending);
-					assert(!pn->nd);
-					pn->pending = true;
-					pn->nd = this;
-					poll_pending.push_back(pn);
+				while(!poll_pending.empty()) {
+					auto pn = poll_pending.pop_front();
+					pn->complete();
 				}
-			}
+				return false;
+			}(); // Immediately invoked.
 
-			while(!poll_pending.empty()) {
-				auto pn = poll_pending.pop_front();
-				pn->complete();
+			if(fast_path) {
+				execution::set_value_inline(receiver_);
+				return true;
 			}
 			return false;
 		}
