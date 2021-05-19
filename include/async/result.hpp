@@ -456,66 +456,6 @@ public:
 	}
 };
 
-// ----------------------------------------------------------------------------
-// pledge<T> class implementation.
-// ----------------------------------------------------------------------------
-
-namespace detail {
-	template<typename T>
-	struct pledge_base : awaitable<T> {
-		pledge_base()
-		: _retrieved(false) { }
-
-		pledge_base(const pledge_base &) = delete;
-
-		~pledge_base() {
-			assert(_retrieved);
-		}
-
-		pledge_base &operator= (const pledge_base &other) = delete;
-
-		void submit() override {
-			_active = true;
-			if(_raised)
-				awaitable<T>::set_ready();
-		}
-
-		void dispose() override {
-			// TODO
-			//std::cout << "libasync: Handle dispose() for pledge" << std::endl;
-		}
-
-		result<T> async_get() {
-			assert(!std::exchange(_retrieved, true));
-			return result<T>{this};
-		}
-
-		void set_ready() {
-			_raised = true;
-			if(_active)
-				awaitable<T>::set_ready();
-		}
-
-	protected:
-		bool _retrieved;
-		bool _active = false;
-		bool _raised = false;
-	};
-
-	template<typename T>
-	struct pledge : private pledge_base<T> {
-		using pledge_base<void>::emplace_value;
-		using pledge_base<void>::async_get;
-	};
-
-	template<>
-	struct pledge<void> : private pledge_base<void> {
-		using pledge_base<void>::async_get;
-	};
-}
-
-using detail::pledge;
-
 // TODO: Support non-void results.
 template<typename A>
 async::result<void> make_result(A awaitable) {
