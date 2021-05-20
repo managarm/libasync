@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/algorithm.hpp>
 #include <async/cancellation.hpp>
 #include <frg/functional.hpp>
 #include <frg/list.hpp>
@@ -126,8 +127,14 @@ public:
 		cancellation_token ct;
 	};
 
-	wait_sender wait(cancellation_token ct = {}) {
+	wait_sender wait(cancellation_token ct) {
 		return {this, ct};
+	}
+
+	auto wait() {
+		return async::transform(wait(cancellation_token{}), [] (bool waitSuccess) {
+			assert(waitSuccess);
+		});
 	}
 
 private:
