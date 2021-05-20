@@ -36,6 +36,18 @@ namespace corons = std::experimental;
 
 namespace async {
 
+template<typename E>
+requires requires(E &&e) { operator co_await(std::forward<E>(e)); }
+auto make_awaiter(E &&e) {
+	return operator co_await(std::forward<E>(e));
+}
+
+template<typename E>
+requires requires(E &&e) { std::forward<E>(e).operator co_await(); }
+auto make_awaiter(E &&e) {
+	return std::forward<E>(e).operator co_await();
+}
+
 // ----------------------------------------------------------------------------
 // sender_awaiter template.
 // ----------------------------------------------------------------------------
