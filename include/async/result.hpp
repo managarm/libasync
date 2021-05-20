@@ -456,10 +456,9 @@ public:
 	}
 };
 
-// TODO: Support non-void results.
-template<typename A>
-async::result<void> make_result(A awaitable) {
-	co_await std::forward<A>(awaitable);
+template<typename S>
+async::result<typename S::value_type> make_result(S sender) {
+	co_return co_await std::move(sender);
 }
 
 } // namespace async
