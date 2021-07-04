@@ -125,8 +125,244 @@ namespace detail {
 			>
 		> waiters_;
 	};
+
+	struct shared_mutex {
+	private:
+		enum class state {
+			none,
+			shared,
+			exclusive
+		};
+
+		struct node {
+			node() = default;
+
+			node(const node &) = delete;
+
+			node &operator= (const node &) = delete;
+
+		protected:
+			~node() = default;
+
+		public:
+			virtual void complete() = 0;
+
+			frg::default_list_hook<node> hook;
+			state desired;
+		};
+
+	public:
+		shared_mutex() = default;
+
+		// ------------------------------------------------------------------------------
+		// async_lock and boilerplate.
+		// ------------------------------------------------------------------------------
+
+		template<typename R>
+		struct [[nodiscard]] lock_operation final : private node {
+		private:
+			using node::desired;
+
+		public:
+			lock_operation(shared_mutex *self, R receiver)
+			: self_{self}, receiver_{std::move(receiver)} {
+				desired = state::exclusive;
+			}
+
+			bool start_inline() {
+				{
+					frg::unique_lock lock(self_->mutex_);
+
+					if(self_->st_ != state::none) {
+						// Slow path.
+						self_->waiters_.push_back(this);
+						return false;
+					}
+
+					// Fast path.
+					self_->st_ = state::exclusive;
+				}
+
+				execution::set_value_inline(receiver_);
+				return true;
+			}
+
+		private:
+			void complete() override {
+				execution::set_value_noinline(receiver_);
+			}
+
+			shared_mutex *self_;
+			R receiver_;
+		};
+
+		struct [[nodiscard]] lock_sender {
+			using value_type = void;
+
+			template<typename R>
+			lock_operation<R> connect(R receiver) {
+				return {self, std::move(receiver)};
+			}
+
+			sender_awaiter<lock_sender>
+			operator co_await () {
+				return {*this};
+			}
+
+			shared_mutex *self;
+		};
+
+		lock_sender async_lock() {
+			return {this};
+		}
+
+		// ------------------------------------------------------------------------------
+		// async_lock_shared and boilerplate.
+		// ------------------------------------------------------------------------------
+
+		template<typename R>
+		struct [[nodiscard]] lock_shared_operation final : private node {
+		private:
+			using node::desired;
+
+		public:
+			lock_shared_operation(shared_mutex *self, R receiver)
+			: self_{self}, receiver_{std::move(receiver)} {
+				desired = state::shared;
+			}
+
+			bool start_inline() {
+				{
+					frg::unique_lock lock(self_->mutex_);
+
+					if(self_->st_ == state::none) {
+						// Fast path.
+						self_->st_ = state::shared;
+					}else if(self_->st_ == state::shared && self_->waiters_.empty()) {
+						// Fast path.
+					}else{
+						// Slow path.
+						self_->waiters_.push_back(this);
+						return false;
+					}
+				}
+
+				execution::set_value_inline(receiver_);
+				return true;
+			}
+
+		private:
+			void complete() override {
+				execution::set_value_noinline(receiver_);
+			}
+
+			shared_mutex *self_;
+			R receiver_;
+		};
+
+		struct [[nodiscard]] lock_shared_sender {
+			using value_type = void;
+
+			template<typename R>
+			lock_shared_operation<R> connect(R receiver) {
+				return {self, std::move(receiver)};
+			}
+
+			sender_awaiter<lock_shared_sender>
+			operator co_await () {
+				return {*this};
+			}
+
+			shared_mutex *self;
+		};
+
+		lock_shared_sender async_lock_shared() {
+			return {this};
+		}
+
+		// ------------------------------------------------------------------------------
+
+		void unlock() {
+			frg::intrusive_list<
+				node,
+				frg::locate_member<
+					node,
+					frg::default_list_hook<node>,
+					&node::hook
+				>
+			> pending;
+			{
+				frg::unique_lock lock(mutex_);
+				assert(st_ == state::exclusive);
+
+				if(waiters_.empty()) {
+					st_ = state::none;
+					return;
+				}
+
+				if(waiters_.front()->desired == state::exclusive) {
+					pending.push_back(waiters_.pop_front());
+				}else{
+					st_ = state::shared;
+					while(waiters_.front()->desired == state::shared)
+						pending.push_back(waiters_.pop_front());
+				}
+			}
+			assert(!pending.empty());
+
+			while(!pending.empty())
+				pending.pop_front()->complete();
+		}
+
+		void unlock_shared() {
+			frg::intrusive_list<
+				node,
+				frg::locate_member<
+					node,
+					frg::default_list_hook<node>,
+					&node::hook
+				>
+			> pending;
+			{
+				frg::unique_lock lock(mutex_);
+				assert(st_ == state::shared);
+
+				if(waiters_.empty()) {
+					st_ = state::none;
+					return;
+				}
+
+				if(waiters_.front()->desired == state::exclusive) {
+					st_ = state::exclusive;
+					pending.push_back(waiters_.pop_front());
+				}else{
+					while(waiters_.front()->desired == state::shared)
+						pending.push_back(waiters_.pop_front());
+				}
+			}
+			assert(!pending.empty());
+
+			while(!pending.empty())
+				pending.pop_front()->complete();
+		}
+
+	private:
+		platform::mutex mutex_;
+
+		state st_ = state::none;
+
+		frg::intrusive_list<
+			node,
+			frg::locate_member<
+				node,
+				frg::default_list_hook<node>,
+				&node::hook
+			>
+		> waiters_;
+	};
 }
 
 using detail::mutex;
+using detail::shared_mutex;
 
 } // namespace async
