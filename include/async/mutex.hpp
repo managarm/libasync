@@ -237,9 +237,13 @@ namespace detail {
 
 					if(self_->st_ == state::none) {
 						// Fast path.
+						assert(!self_->shared_cnt_);
 						self_->st_ = state::shared;
+						self_->shared_cnt_ = 1;
 					}else if(self_->st_ == state::shared && self_->waiters_.empty()) {
 						// Fast path.
+						assert(self_->shared_cnt_);
+						++self_->shared_cnt_;
 					}else{
 						// Slow path.
 						self_->waiters_.push_back(this);
@@ -303,9 +307,13 @@ namespace detail {
 				if(waiters_.front()->desired == state::exclusive) {
 					pending.push_back(waiters_.pop_front());
 				}else{
+					assert(!shared_cnt_);
 					st_ = state::shared;
-					while(waiters_.front()->desired == state::shared)
+					shared_cnt_ = 1;
+					while(waiters_.front()->desired == state::shared) {
 						pending.push_back(waiters_.pop_front());
+						++shared_cnt_;
+					}
 				}
 			}
 			assert(!pending.empty());
@@ -326,19 +334,20 @@ namespace detail {
 			{
 				frg::unique_lock lock(mutex_);
 				assert(st_ == state::shared);
+				assert(shared_cnt_);
+
+				--shared_cnt_;
+				if(shared_cnt_)
+					return;
 
 				if(waiters_.empty()) {
 					st_ = state::none;
 					return;
 				}
 
-				if(waiters_.front()->desired == state::exclusive) {
-					st_ = state::exclusive;
-					pending.push_back(waiters_.pop_front());
-				}else{
-					while(waiters_.front()->desired == state::shared)
-						pending.push_back(waiters_.pop_front());
-				}
+				assert(waiters_.front()->desired == state::exclusive);
+				st_ = state::exclusive;
+				pending.push_back(waiters_.pop_front());
 			}
 			assert(!pending.empty());
 
@@ -350,6 +359,8 @@ namespace detail {
 		platform::mutex mutex_;
 
 		state st_ = state::none;
+
+		unsigned int shared_cnt_ = 0;
 
 		frg::intrusive_list<
 			node,
