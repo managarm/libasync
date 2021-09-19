@@ -22,6 +22,7 @@ gtest_binary = executable('gtests',
 	'tests/mutex.cpp',
 	'tests/race.cpp',
 	'tests/algorithm.cpp',
+	'tests/promise.cpp',
 	include_directories: include_directories('include/'),
 	cpp_args: cpp_args,
 	dependencies: [

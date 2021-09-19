@@ -12,4 +12,5 @@ install:
 	install -p --mode=0644 $S/include/async/result.hpp $(DESTDIR)$(prefix)include/async/
 	install -p --mode=0644 $S/include/async/queue.hpp $(DESTDIR)$(prefix)include/async/
 	install -p --mode=0644 $S/include/async/algorithm.hpp $(DESTDIR)$(prefix)include/async/
+	install -p --mode=0644 $S/include/async/promise.hpp $(DESTDIR)$(prefix)include/async/
 
