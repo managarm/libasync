@@ -23,6 +23,7 @@ gtest_binary = executable('gtests',
 	'tests/race.cpp',
 	'tests/algorithm.cpp',
 	'tests/promise.cpp',
+	'tests/sequenced.cpp',
 	include_directories: include_directories('include/'),
 	cpp_args: cpp_args,
 	dependencies: [
