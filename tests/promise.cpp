@@ -2,25 +2,15 @@
 
 #include <async/promise.hpp>
 #include <gtest/gtest.h>
-
-struct stl_allocator {
-	void *allocate(size_t size) {
-		return operator new(size);
-	}
-
-	void deallocate(void *p, size_t) {
-		return operator delete(p);
-	}
-};
-
+#include <frg/std_compat.hpp>
 
 TEST(Promise, VoidType) {
 	async::run_queue rq;
 	async::queue_scope qs{&rq};
 
-	async::future<void, stl_allocator> future;
+	async::future<void, frg::stl_allocator> future;
 	{
-		async::promise<void, stl_allocator> promise;
+		async::promise<void, frg::stl_allocator> promise;
 		future = promise.get_future();
 
 		promise.set_value();
@@ -35,9 +25,9 @@ TEST(Promise, IntType) {
 	async::run_queue rq;
 	async::queue_scope qs{&rq};
 
-	async::future<int, stl_allocator> future;
+	async::future<int, frg::stl_allocator> future;
 	{
-		async::promise<int, stl_allocator> promise;
+		async::promise<int, frg::stl_allocator> promise;
 		future = promise.get_future();
 
 		promise.set_value(3);
@@ -62,9 +52,9 @@ TEST(Promise, NonCopyableType) {
 		int i;
 	};
 
-	async::future<non_copy, stl_allocator> future;
+	async::future<non_copy, frg::stl_allocator> future;
 	{
-		async::promise<non_copy, stl_allocator> promise;
+		async::promise<non_copy, frg::stl_allocator> promise;
 		future = promise.get_future();
 
 		promise.set_value(non_copy{3});
@@ -79,9 +69,9 @@ TEST(Promise, MultipleFutures) {
 	async::run_queue rq;
 	async::queue_scope qs{&rq};
 
-	async::future<int, stl_allocator> f1, f2, f3;
+	async::future<int, frg::stl_allocator> f1, f2, f3;
 	{
-		async::promise<int, stl_allocator> promise;
+		async::promise<int, frg::stl_allocator> promise;
 		f1 = promise.get_future();
 		f2 = promise.get_future();
 		f3 = promise.get_future();
