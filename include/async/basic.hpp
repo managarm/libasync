@@ -1,5 +1,4 @@
-#ifndef LIBASYNC_BASIC_HPP
-#define LIBASYNC_BASIC_HPP
+#pragma once
 
 #include <atomic>
 
@@ -8,6 +7,7 @@
 #include <frg/optional.hpp>
 #include <frg/mutex.hpp>
 #include <frg/eternal.hpp>
+#include <frg/std_compat.hpp>
 
 #ifndef LIBASYNC_CUSTOM_PLATFORM
 #include <mutex>
@@ -623,60 +623,15 @@ operator co_await(yield_sender s) {
 
 struct detached {
 	struct promise_type {
-		struct initial_awaiter {
-			bool await_ready() {
-				return false;
-			}
-
-			void await_suspend(corons::coroutine_handle<> h) {
-				_rt.arm(_rm, [address = h.address()] {
-					auto h = corons::coroutine_handle<>::from_address(address);
-					h.resume();
-				});
-				_rt.post(_rm);
-			}
-
-			void await_resume() { }
-
-		private:
-			resumption_on_current_queue _rm;
-			resumption_on_current_queue::token _rt;
-		};
-
-		struct final_awaiter {
-			bool await_ready() noexcept {
-				return false;
-			}
-
-			void await_suspend(corons::coroutine_handle<> h) noexcept {
-				// Calling h.destroy() here causes the code to break.
-				// TODO: Is this a LLVM bug? Workaround: Defer it to a run_queue.
-				_rt.arm(_rm, [address = h.address()] {
-					auto h = corons::coroutine_handle<>::from_address(address);
-					h.destroy();
-				});
-				_rt.post(_rm);
-			}
-
-			void await_resume() noexcept {
-				platform::panic("libasync: Internal fatal error:"
-						" Coroutine resumed from final suspension point");
-			}
-
-		private:
-			resumption_on_current_queue _rm;
-			resumption_on_current_queue::token _rt;
-		};
-
 		detached get_return_object() {
 			return {};
 		}
 
-		initial_awaiter initial_suspend() {
+		corons::suspend_never initial_suspend() {
 			return {};
 		}
 
-		final_awaiter final_suspend() noexcept {
+		corons::suspend_never final_suspend() noexcept {
 			return {};
 		}
 
@@ -690,29 +645,16 @@ struct detached {
 	};
 };
 
-template<typename A>
-detached detach(A awaitable) {
-	return detach(std::move(awaitable), [] { });
-}
-
-// TODO: Use a specialized coroutine promise that allows us to control
-//       the run_queue that the coroutine is executed on.
-template<typename A, typename Cont>
-detached detach(A awaitable, Cont continuation) {
-	co_await std::move(awaitable);
-	continuation();
-}
-
 namespace detach_details_ {
-	template<typename Allocator, typename S>
+	template<typename Allocator, typename S, typename Cont>
 	struct control_block;
 
-	template<typename Allocator, typename S>
-	void finalize(control_block<Allocator, S> *cb);
+	template<typename Allocator, typename S, typename Cont>
+	void finalize(control_block<Allocator, S, Cont> *cb);
 
-	template<typename Allocator, typename S>
+	template<typename Allocator, typename S, typename Cont>
 	struct final_receiver {
-		final_receiver(control_block<Allocator, S> *cb)
+		final_receiver(control_block<Allocator, S, Cont> *cb)
 		: cb_{cb} { }
 
 		void set_value_inline() {
@@ -724,34 +666,52 @@ namespace detach_details_ {
 		}
 
 	private:
-		control_block<Allocator, S> *cb_;
+		control_block<Allocator, S, Cont> *cb_;
 	};
 
 	// Heap-allocate data structure that holds the operation.
 	// We cannot directly put the operation onto the heap as it is non-movable.
-	template<typename Allocator, typename S>
+	template<typename Allocator, typename S, typename Cont>
 	struct control_block {
-		friend void finalize(control_block<Allocator, S> *cb) {
+		friend void finalize(control_block<Allocator, S, Cont> *cb) {
 			auto allocator = std::move(cb->allocator);
+			auto continuation = std::move(cb->continuation);
 			frg::destruct(allocator, cb);
+			continuation();
 		}
 
-		control_block(Allocator allocator, S sender)
+		control_block(Allocator allocator, S sender, Cont continuation)
 		: allocator{std::move(allocator)},
 				operation{execution::connect(
-						std::move(sender), final_receiver<Allocator, S>{this})} { }
+						std::move(sender), final_receiver<Allocator, S, Cont>{this})},
+				continuation{std::move(continuation)} { }
 
 		Allocator allocator;
-		execution::operation_t<S, final_receiver<Allocator, S>> operation;
+		execution::operation_t<S, final_receiver<Allocator, S, Cont>> operation;
+		Cont continuation;
 	};
 }
 
-// TODO: rewrite detach() in terms of this function.
+template<typename Allocator, typename S, typename Cont>
+void detach_with_allocator(Allocator allocator, S sender, Cont continuation) {
+	auto p = frg::construct<detach_details_::control_block<Allocator, S, Cont>>(allocator,
+			allocator, std::move(sender), std::move(continuation));
+	execution::start_inline(p->operation);
+}
+
 template<typename Allocator, typename S>
 void detach_with_allocator(Allocator allocator, S sender) {
-	auto p = frg::construct<detach_details_::control_block<Allocator, S>>(allocator,
-			allocator, std::move(sender));
-	execution::start_inline(p->operation);
+	detach_with_allocator<Allocator, S>(std::move(allocator), std::move(sender), [] { });
+}
+
+template<typename S>
+void detach(S sender) {
+	return detach_with_allocator(frg::stl_allocator{}, std::move(sender));
+}
+
+template<typename S, typename Cont>
+void detach(S sender, Cont continuation) {
+	return detach_with_allocator(frg::stl_allocator{}, std::move(sender), std::move(continuation));
 }
 
 namespace spawn_details_ {
@@ -914,5 +874,3 @@ struct cancelable_awaitable : awaitable<T> {
 };
 
 } // namespace async
-
-#endif // LIBASYNC_BASIC_HPP
