@@ -5,9 +5,6 @@
 #include <frg/std_compat.hpp>
 
 TEST(Promise, VoidType) {
-	async::run_queue rq;
-	async::queue_scope qs{&rq};
-
 	async::future<void, frg::stl_allocator> future;
 	{
 		async::promise<void, frg::stl_allocator> promise;
@@ -16,15 +13,12 @@ TEST(Promise, VoidType) {
 		promise.set_value();
 	}
 
-	async::run(future.get(), async::current_queue);
+	async::run(future.get());
 
 	ASSERT_TRUE(true);
 }
 
 TEST(Promise, IntType) {
-	async::run_queue rq;
-	async::queue_scope qs{&rq};
-
 	async::future<int, frg::stl_allocator> future;
 	{
 		async::promise<int, frg::stl_allocator> promise;
@@ -33,15 +27,12 @@ TEST(Promise, IntType) {
 		promise.set_value(3);
 	}
 
-	auto res = *async::run(future.get(), async::current_queue);
+	auto res = *async::run(future.get());
 
 	ASSERT_EQ(res, 3);
 }
 
 TEST(Promise, NonCopyableType) {
-	async::run_queue rq;
-	async::queue_scope qs{&rq};
-
 	struct non_copy {
 		non_copy(int i) : i{i} { }
 		non_copy(const non_copy &) = delete;
@@ -60,15 +51,12 @@ TEST(Promise, NonCopyableType) {
 		promise.set_value(non_copy{3});
 	}
 
-	auto &res = *async::run(future.get(), async::current_queue);
+	auto &res = *async::run(future.get());
 
 	ASSERT_EQ(res.i, 3);
 }
 
 TEST(Promise, MultipleFutures) {
-	async::run_queue rq;
-	async::queue_scope qs{&rq};
-
 	async::future<int, frg::stl_allocator> f1, f2, f3;
 	{
 		async::promise<int, frg::stl_allocator> promise;
@@ -79,9 +67,9 @@ TEST(Promise, MultipleFutures) {
 		promise.set_value(3);
 	}
 
-	auto p1 = async::run(f1.get(), async::current_queue);
-	auto p2 = async::run(f2.get(), async::current_queue);
-	auto p3 = async::run(f3.get(), async::current_queue);
+	auto p1 = async::run(f1.get());
+	auto p2 = async::run(f2.get());
+	auto p3 = async::run(f3.get());
 
 	ASSERT_EQ(p1, p2);
 	ASSERT_EQ(p1, p3);
