@@ -370,9 +370,7 @@ private:
 		internal_receiver(race_and_cancel_operation *self)
 		: self_{self} { }
 
-		// TODO: properly support inline completion.
 		void set_value_inline() {
-			set_value_noinline();
 		}
 
 		void set_value_noinline() {
@@ -383,7 +381,7 @@ private:
 						self_->cs_[j].cancel();
 			}
 			if(n + 1 == sizeof...(Is))
-				execution::set_value(self_->r_);
+				execution::set_value_noinline(self_->r_);
 		}
 
 	private:
@@ -412,16 +410,36 @@ private:
 
 public:
 	race_and_cancel_operation(race_and_cancel_sender<Functors...> s, Receiver r)
-	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_done_{0} { }
+	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_sync_{0}, n_done_{0} { }
 
-	void start() {
-		(execution::start_inline(ops_.template get<Is>()), ...);
+	bool start_inline() {
+		unsigned int n_sync = 0;
+
+		((execution::start_inline(ops_.template get<Is>())
+			? n_sync++ : 0), ...);
+
+		if (n_sync) {
+			auto n = n_done_.fetch_add(n_sync, std::memory_order_acq_rel);
+
+			if (!n) {
+				for(unsigned int j = 0; j < sizeof...(Is); ++j)
+					cs_[j].cancel();
+			}
+
+			if ((n + n_sync) == sizeof...(Is)) {
+				execution::set_value_inline(r_);
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 private:
 	Receiver r_;
 	operation_tuple ops_;
 	cancellation_event cs_[sizeof...(Is)];
+	std::atomic<unsigned int> n_sync_;
 	std::atomic<unsigned int> n_done_;
 };
 

@@ -28,7 +28,7 @@ private:
 		virtual void complete() = 0;
 
 	protected:
-		~node() = default;
+		virtual ~node() = default;
 
 	private:
 		// Protected by _mutex.

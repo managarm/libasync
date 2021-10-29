@@ -4,9 +4,6 @@
 #include <gtest/gtest.h>
 
 TEST(Algorithm, Let) {
-	async::run_queue rq;
-	async::queue_scope qs{&rq};
-
 	int v = async::run([]() -> async::result<int> {
 		co_return co_await async::let(
 			[]() -> int { return 21; },
@@ -14,14 +11,11 @@ TEST(Algorithm, Let) {
 				co_return ref * 2;
 			}
 		);
-	}(), async::current_queue);
+	}());
 	ASSERT_EQ(v, 42);
 }
 
 TEST(Algorithm, Sequence) {
-	async::run_queue rq;
-	async::queue_scope qs{&rq};
-
 	int steps[4] = {0, 0, 0, 0};
 	int v = async::run([&]() -> async::result<int> {
 		int i = 0;
@@ -47,7 +41,7 @@ TEST(Algorithm, Sequence) {
 				co_return i;
 			}()
 		);
-	}(), async::current_queue);
+	}());
 	ASSERT_EQ(v, 4);
 
 	for (int i = 0; i < 4; i++)

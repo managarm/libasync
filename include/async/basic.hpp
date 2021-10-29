@@ -1,5 +1,4 @@
-#ifndef LIBASYNC_BASIC_HPP
-#define LIBASYNC_BASIC_HPP
+#pragma once
 
 #include <atomic>
 
@@ -8,12 +7,13 @@
 #include <frg/optional.hpp>
 #include <frg/mutex.hpp>
 #include <frg/eternal.hpp>
+#include <frg/std_compat.hpp>
 
 #ifndef LIBASYNC_CUSTOM_PLATFORM
 #include <mutex>
 #include <iostream>
 #include <cassert>
-#define LIBASYNC_THREAD_LOCAL thread_local
+
 namespace async::platform {
 	using mutex = std::mutex;
 
@@ -234,20 +234,6 @@ private:
 };
 
 // ----------------------------------------------------------------------------
-// Top-level execution functions.
-// ----------------------------------------------------------------------------
-
-template<typename RunToken, typename IoService>
-void run_forever(RunToken rt, IoService ios) {
-	while(true) {
-		rt.run_iteration();
-		if(!rt.is_drained())
-			continue;
-		ios.wait();
-	}
-}
-
-// ----------------------------------------------------------------------------
 // run_queue implementation.
 // ----------------------------------------------------------------------------
 
@@ -309,9 +295,69 @@ private:
 	> _run_list;
 };
 
-template<typename Sender, typename RunToken>
+// ----------------------------------------------------------------------------
+// Top-level execution functions.
+// ----------------------------------------------------------------------------
+
+template<typename IoService>
+void run_forever(IoService ios) {
+	while(true) {
+		ios.wait();
+	}
+}
+
+template<typename Sender>
 std::enable_if_t<std::is_same_v<typename Sender::value_type, void>, void>
-run(Sender s, RunToken rt) {
+run(Sender s) {
+	struct receiver {
+		void set_value_inline() { }
+
+		void set_value_noinline() { }
+	};
+
+	auto operation = execution::connect(std::move(s), receiver{});
+	if(execution::start_inline(operation))
+		return;
+
+	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
+}
+
+template<typename Sender>
+std::enable_if_t<!std::is_same_v<typename Sender::value_type, void>,
+		typename Sender::value_type>
+run(Sender s) {
+	struct state {
+		frg::optional<typename Sender::value_type> value;
+	};
+
+	struct receiver {
+		receiver(state *stp)
+		: stp_{stp} { }
+
+		void set_value_inline(typename Sender::value_type value) {
+			stp_->value.emplace(std::move(value));
+		}
+
+		void set_value_noinline(typename Sender::value_type value) {
+			stp_->value.emplace(std::move(value));
+		}
+
+	private:
+		state *stp_;
+	};
+
+	state st;
+
+	auto operation = execution::connect(std::move(s), receiver{&st});
+	if (execution::start_inline(operation))
+		return std::move(*st.value);
+
+	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
+}
+
+template<typename Sender, typename IoService>
+std::enable_if_t<std::is_same_v<typename Sender::value_type, void>, void>
+run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
 	};
@@ -339,15 +385,14 @@ run(Sender s, RunToken rt) {
 		return;
 
 	while(!st.done) {
-		assert(!rt.is_drained());
-		rt.run_iteration();
+		ios.wait();
 	}
 }
 
-template<typename Sender, typename RunToken>
+template<typename Sender, typename IoService>
 std::enable_if_t<!std::is_same_v<typename Sender::value_type, void>,
 		typename Sender::value_type>
-run(Sender s, RunToken rt) {
+run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
 		frg::optional<typename Sender::value_type> value;
@@ -378,244 +423,11 @@ run(Sender s, RunToken rt) {
 		return std::move(*st.value);
 
 	while(!st.done) {
-		assert(!rt.is_drained());
-		rt.run_iteration();
+		ios.wait();
 	}
+
 	return std::move(*st.value);
 }
-
-template<typename Sender, typename RunToken, typename IoService>
-std::enable_if_t<std::is_same_v<typename Sender::value_type, void>, void>
-run(Sender s, RunToken rt, IoService ios) {
-	struct state {
-		bool done = false;
-	};
-
-	struct receiver {
-		receiver(state *stp)
-		: stp_{stp} { }
-
-		void set_value_inline() {
-			stp_->done = true;
-		}
-
-		void set_value_noinline() {
-			stp_->done = true;
-		}
-
-	private:
-		state *stp_;
-	};
-
-	state st;
-
-	auto operation = execution::connect(std::move(s), receiver{&st});
-	if(execution::start_inline(operation))
-		return;
-
-	while(!st.done) {
-		rt.run_iteration();
-		if (!rt.is_drained())
-			continue;
-
-		// Make sure we don't go into the io service while there is nothing to wait for
-		if (!st.done)
-			ios.wait();
-	}
-}
-
-template<typename Sender, typename RunToken, typename IoService>
-std::enable_if_t<!std::is_same_v<typename Sender::value_type, void>,
-		typename Sender::value_type>
-run(Sender s, RunToken rt, IoService ios) {
-	struct state {
-		bool done = false;
-		frg::optional<typename Sender::value_type> value;
-	};
-
-	struct receiver {
-		receiver(state *stp)
-		: stp_{stp} { }
-
-		void set_value_inline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-			stp_->done = true;
-		}
-
-		void set_value_noinline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-			stp_->done = true;
-		}
-
-	private:
-		state *stp_;
-	};
-
-	state st;
-
-	auto operation = execution::connect(std::move(s), receiver{&st});
-	if(execution::start_inline(operation))
-		return std::move(*st.value);
-
-	while(!st.done) {
-		rt.run_iteration();
-		if (!rt.is_drained())
-			continue;
-
-		// Make sure we don't go into the io service while there is nothing to wait for
-		if (!st.done)
-			ios.wait();
-	}
-	return std::move(*st.value);
-}
-
-struct queue_scope {
-	queue_scope(run_queue *queue);
-
-	queue_scope(const queue_scope &) = delete;
-
-	~queue_scope();
-
-	queue_scope &operator= (const queue_scope &) = delete;
-
-private:
-	run_queue *_queue;
-	run_queue *_prev_queue;
-};
-
-struct current_queue_token {
-	void run_iteration();
-	bool is_drained();
-};
-
-inline constexpr current_queue_token current_queue;
-
-inline void run_queue::post(run_queue_item *item) {
-	// TODO: Implement cross-queue posting.
-	assert(get_current_queue() == this);
-	assert(item->_cb && "run_queue_item is posted with a null callback");
-
-	_run_list.push_back(item);
-}
-
-// ----------------------------------------------------------------------------
-// queue_scope implementation.
-// ----------------------------------------------------------------------------
-
-inline LIBASYNC_THREAD_LOCAL run_queue *_thread_current_queue{nullptr};
-
-inline run_queue *get_current_queue() {
-	return _thread_current_queue;
-}
-
-inline queue_scope::queue_scope(run_queue *queue)
-: _queue{queue} {
-	_prev_queue = _thread_current_queue;
-	_thread_current_queue = _queue;
-}
-
-inline queue_scope::~queue_scope() {
-	assert(_thread_current_queue == _queue);
-	_thread_current_queue = _prev_queue;
-}
-
-// ----------------------------------------------------------------------------
-// queue_token implementation.
-// ----------------------------------------------------------------------------
-
-inline bool run_queue_token::is_drained() {
-	return rq_->_run_list.empty();
-}
-
-inline void run_queue_token::run_iteration() {
-	queue_scope rqs{rq_};
-
-	while(!rq_->_run_list.empty()) {
-		auto item = rq_->_run_list.front();
-		rq_->_run_list.pop_front();
-		item->_cb();
-	}
-}
-
-inline bool current_queue_token::is_drained() {
-	auto rq = get_current_queue();
-	assert(rq && "current_queue_token is used outside of queue");
-	return rq->_run_list.empty();
-}
-
-inline void current_queue_token::run_iteration() {
-	auto rq = get_current_queue();
-	assert(rq && "current_queue_token is used outside of queue");
-
-	while(!rq->_run_list.empty()) {
-		auto item = rq->_run_list.front();
-		rq->_run_list.pop_front();
-		item->_cb();
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Utilities related to run_queues.
-// ----------------------------------------------------------------------------
-
-struct resumption_on_current_queue {
-	struct token {
-		token() = default;
-
-		void arm(const resumption_on_current_queue &, callback<void()> cb) {
-			_rqi.arm(cb);
-		}
-
-		void post(const resumption_on_current_queue &) {
-			auto q = get_current_queue();
-			assert(q && "resumption_on_current_queue token is posted outside of queue");
-			q->post(&_rqi);
-		}
-
-	private:
-		run_queue_item _rqi;
-	};
-};
-
-struct yield_sender {
-	run_queue *q;
-};
-
-inline yield_sender yield_to_current_queue() {
-	auto q = get_current_queue();
-	assert(q && "yield_to_current_queue() outside of queue");
-	return yield_sender{q};
-}
-
-template<typename Receiver>
-struct yield_operation {
-	yield_operation(yield_sender s, Receiver r)
-	: q_{s.q}, r_{std::move(r)} {
-		_rqi.arm([this] {
-			async::execution::set_value_noinline(r_);
-		});
-	}
-
-	bool start_inline() {
-		q_->post(&_rqi);
-		return false;
-	}
-
-private:
-	run_queue *q_;
-	Receiver r_;
-	run_queue_item _rqi;
-};
-
-template<typename Receiver>
-yield_operation<Receiver> connect(yield_sender s, Receiver r) {
-	return {s, std::move(r)};
-}
-
-inline async::sender_awaiter<yield_sender, void>
-operator co_await(yield_sender s) {
-	return {s};
-};
 
 // ----------------------------------------------------------------------------
 // Detached coroutines.
@@ -623,60 +435,15 @@ operator co_await(yield_sender s) {
 
 struct detached {
 	struct promise_type {
-		struct initial_awaiter {
-			bool await_ready() {
-				return false;
-			}
-
-			void await_suspend(corons::coroutine_handle<> h) {
-				_rt.arm(_rm, [address = h.address()] {
-					auto h = corons::coroutine_handle<>::from_address(address);
-					h.resume();
-				});
-				_rt.post(_rm);
-			}
-
-			void await_resume() { }
-
-		private:
-			resumption_on_current_queue _rm;
-			resumption_on_current_queue::token _rt;
-		};
-
-		struct final_awaiter {
-			bool await_ready() noexcept {
-				return false;
-			}
-
-			void await_suspend(corons::coroutine_handle<> h) noexcept {
-				// Calling h.destroy() here causes the code to break.
-				// TODO: Is this a LLVM bug? Workaround: Defer it to a run_queue.
-				_rt.arm(_rm, [address = h.address()] {
-					auto h = corons::coroutine_handle<>::from_address(address);
-					h.destroy();
-				});
-				_rt.post(_rm);
-			}
-
-			void await_resume() noexcept {
-				platform::panic("libasync: Internal fatal error:"
-						" Coroutine resumed from final suspension point");
-			}
-
-		private:
-			resumption_on_current_queue _rm;
-			resumption_on_current_queue::token _rt;
-		};
-
 		detached get_return_object() {
 			return {};
 		}
 
-		initial_awaiter initial_suspend() {
+		corons::suspend_never initial_suspend() {
 			return {};
 		}
 
-		final_awaiter final_suspend() noexcept {
+		corons::suspend_never final_suspend() noexcept {
 			return {};
 		}
 
@@ -690,29 +457,16 @@ struct detached {
 	};
 };
 
-template<typename A>
-detached detach(A awaitable) {
-	return detach(std::move(awaitable), [] { });
-}
-
-// TODO: Use a specialized coroutine promise that allows us to control
-//       the run_queue that the coroutine is executed on.
-template<typename A, typename Cont>
-detached detach(A awaitable, Cont continuation) {
-	co_await std::move(awaitable);
-	continuation();
-}
-
 namespace detach_details_ {
-	template<typename Allocator, typename S>
+	template<typename Allocator, typename S, typename Cont>
 	struct control_block;
 
-	template<typename Allocator, typename S>
-	void finalize(control_block<Allocator, S> *cb);
+	template<typename Allocator, typename S, typename Cont>
+	void finalize(control_block<Allocator, S, Cont> *cb);
 
-	template<typename Allocator, typename S>
+	template<typename Allocator, typename S, typename Cont>
 	struct final_receiver {
-		final_receiver(control_block<Allocator, S> *cb)
+		final_receiver(control_block<Allocator, S, Cont> *cb)
 		: cb_{cb} { }
 
 		void set_value_inline() {
@@ -724,34 +478,52 @@ namespace detach_details_ {
 		}
 
 	private:
-		control_block<Allocator, S> *cb_;
+		control_block<Allocator, S, Cont> *cb_;
 	};
 
 	// Heap-allocate data structure that holds the operation.
 	// We cannot directly put the operation onto the heap as it is non-movable.
-	template<typename Allocator, typename S>
+	template<typename Allocator, typename S, typename Cont>
 	struct control_block {
-		friend void finalize(control_block<Allocator, S> *cb) {
+		friend void finalize(control_block<Allocator, S, Cont> *cb) {
 			auto allocator = std::move(cb->allocator);
+			auto continuation = std::move(cb->continuation);
 			frg::destruct(allocator, cb);
+			continuation();
 		}
 
-		control_block(Allocator allocator, S sender)
+		control_block(Allocator allocator, S sender, Cont continuation)
 		: allocator{std::move(allocator)},
 				operation{execution::connect(
-						std::move(sender), final_receiver<Allocator, S>{this})} { }
+						std::move(sender), final_receiver<Allocator, S, Cont>{this})},
+				continuation{std::move(continuation)} { }
 
 		Allocator allocator;
-		execution::operation_t<S, final_receiver<Allocator, S>> operation;
+		execution::operation_t<S, final_receiver<Allocator, S, Cont>> operation;
+		Cont continuation;
 	};
 }
 
-// TODO: rewrite detach() in terms of this function.
+template<typename Allocator, typename S, typename Cont>
+void detach_with_allocator(Allocator allocator, S sender, Cont continuation) {
+	auto p = frg::construct<detach_details_::control_block<Allocator, S, Cont>>(allocator,
+			allocator, std::move(sender), std::move(continuation));
+	execution::start_inline(p->operation);
+}
+
 template<typename Allocator, typename S>
 void detach_with_allocator(Allocator allocator, S sender) {
-	auto p = frg::construct<detach_details_::control_block<Allocator, S>>(allocator,
-			allocator, std::move(sender));
-	execution::start_inline(p->operation);
+	detach_with_allocator<Allocator, S>(std::move(allocator), std::move(sender), [] { });
+}
+
+template<typename S>
+void detach(S sender) {
+	return detach_with_allocator(frg::stl_allocator{}, std::move(sender));
+}
+
+template<typename S, typename Cont>
+void detach(S sender, Cont continuation) {
+	return detach_with_allocator(frg::stl_allocator{}, std::move(sender), std::move(continuation));
 }
 
 namespace spawn_details_ {
@@ -810,109 +582,4 @@ void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
 	execution::start_inline(p->operation);
 }
 
-// ----------------------------------------------------------------------------
-// awaitable.
-// ----------------------------------------------------------------------------
-
-struct awaitable_base {
-	friend struct run_queue;
-
-private:
-	static constexpr int consumer_alive = 1;
-	static constexpr int producer_alive = 2;
-
-	enum class ready_state {
-		null, ready, retired
-	};
-
-protected:
-	virtual ~awaitable_base() = default;
-
-public:
-	awaitable_base();
-
-	awaitable_base(const awaitable_base &) = delete;
-
-	awaitable_base &operator= (const awaitable_base &) = delete;
-
-	bool ready() {
-		return _ready.load(std::memory_order_acquire) != ready_state::null;
-	}
-
-	void then(callback<void()> cb) {
-		assert(_ready.load(std::memory_order_relaxed) != ready_state::retired);
-		_cb = cb;
-		_rt.arm(_rm, [this] { _retire(); });
-		submit();
-	}
-
-	void drop() {
-		dispose();
-	}
-
-protected:
-	void set_ready();
-
-	virtual void submit() = 0;
-
-	virtual void dispose() = 0;
-
-private:
-	void _retire() {
-		// TODO: Do we actually need release semantics here?
-		assert(_ready.load(std::memory_order_relaxed) == ready_state::ready);
-		_ready.store(ready_state::retired, std::memory_order_release);
-		assert(_cb);
-		_cb();
-	}
-
-private:
-	std::atomic<ready_state> _ready;
-	callback<void()> _cb;
-	resumption_on_current_queue _rm;
-	resumption_on_current_queue::token _rt;
-};
-
-inline awaitable_base::awaitable_base()
-: _ready{ready_state::null} { }
-
-inline void awaitable_base::set_ready() {
-	assert(_ready.load(std::memory_order_relaxed) == ready_state::null);
-	_ready.store(ready_state::ready, std::memory_order_release);
-	_rt.post(_rm);
-}
-
-template<typename T>
-struct awaitable : awaitable_base {
-	virtual ~awaitable() { }
-
-	T &value() {
-		return _val.value();
-	}
-
-protected:
-	template<typename... Args>
-	void emplace_value(Args &&... args) {
-		_val.emplace(std::forward<Args>(args)...);
-	}
-
-private:
-	frg::optional<T> _val;
-};
-
-template<>
-struct awaitable<void> : awaitable_base {
-	virtual ~awaitable() { }
-
-protected:
-	void emplace_value() { }
-};
-
-template<typename T>
-struct cancelable_awaitable : awaitable<T> {
-	virtual void cancel() = 0;
-};
-
 } // namespace async
-
-#endif // LIBASYNC_BASIC_HPP
