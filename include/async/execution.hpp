@@ -37,17 +37,17 @@ namespace cpo_types {
 	constexpr bool has_global_connect_v = is_detected_v<global_connect_t, S, R>;
 
 	struct connect_cpo {
-        template<typename Sender, typename Receiver>
-        auto operator() (Sender &&s, Receiver &&r) const {
-            if constexpr (has_connect_member_v<Sender, Receiver>)
-				return s.connect(r);
-            else if constexpr (has_global_connect_v<Sender, Receiver>)
-				return connect(std::forward<Sender>(s), std::forward<Receiver>(r));
-			else
-				static_assert(dependent_false_t<Sender, Receiver>,
-						"No connect() customization defined for sender type");
-        }
-    };
+		template<typename Sender, typename Receiver>
+		auto operator() (Sender &&s, Receiver &&r) const {
+			if constexpr (has_connect_member_v<Sender, Receiver>)
+					return s.connect(r);
+			else if constexpr (has_global_connect_v<Sender, Receiver>)
+					return connect(std::forward<Sender>(s), std::forward<Receiver>(r));
+				else
+					static_assert(dependent_false_t<Sender, Receiver>,
+							"No connect() customization defined for sender type");
+		}
+	};
 
 	template<typename Op>
 	using start_member_t = decltype(std::declval<Op>().start());
@@ -153,8 +153,8 @@ namespace cpo_types {
 }
 
 namespace execution {
-    template<typename S, typename R>
-    using operation_t = std::invoke_result_t<cpo_types::connect_cpo, S, R>;
+	template<typename S, typename R>
+	using operation_t = std::invoke_result_t<cpo_types::connect_cpo, S, R>;
 
 	inline cpo_types::connect_cpo connect;
 	inline cpo_types::start_inline_cpo start_inline;
