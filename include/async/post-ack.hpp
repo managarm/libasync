@@ -267,8 +267,10 @@ public:
 			auto retire_seq = mech_->post_seq_;
 
 			while(retire_seq > poll_seq_) {
-				auto it = std::find_if(mech_->queue_.begin(), mech_->queue_.end(),
-						[&] (auto cand) { return cand->node_seq == poll_seq_; });
+				auto it = mech_->queue_.begin();
+				for (; it != mech_->queue_.end() && (*it)->node_seq != poll_seq_; ++it)
+					;
+
 				assert(it != mech_->queue_.end());
 				auto nd = *it;
 
@@ -312,10 +314,10 @@ public:
 
 				if(agnt_->mech_->post_seq_ > seq) {
 					// Fast path: successful completion.
-					auto it = std::find_if(
-							agnt_->mech_->queue_.begin(),
-							agnt_->mech_->queue_.end(),
-							[&] (auto cand) { return cand->node_seq == seq; });
+					auto it = agnt_->mech_->queue_.begin();
+					for (; it != agnt_->mech_->queue_.end() && (*it)->node_seq != seq; ++it)
+						;
+
 					assert(it != agnt_->mech_->queue_.end());
 					pending = true;
 					nd = *it;
