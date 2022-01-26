@@ -1,0 +1,35 @@
+name: Documentation
+on:
+  push:
+  pull_request:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Get dependencies
+        run: |
+          sudo apt-get -y install python3-dev libxml2-dev libxslt1-dev \
+                                  cmake libyaml-dev libclang-dev llvm-dev \
+                                  libglib2.0-dev libjson-glib-dev flex \
+                                  ninja-build jq
+          pip install -U meson hotdoc
+          wget https://raw.githubusercontent.com/WayneD/rsync/c3f7414c450faaf6a8281cc4a4403529aeb7d859/rsync-ssl
+          sudo install -D rsync-ssl /usr/local/bin/rsync-ssl
+      - name: Build
+        run: |
+          meson -Denable_docs=true build
+          cd build
+          ninja build-doc
+      - name: Upload docs as artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: libasync-docs
+          path: build/libasync-doc/
+      - name: Upload docs to docs.managarm.org
+        if: github.ref == 'refs/heads/master' && github.repository == 'managarm/libasync'
+        env:
+          RSYNC_PASSWORD: ${{ secrets.RSYNC_DOCUMENTATION_PASSWD }}
+        run: |
+          rsync-ssl -a --delete build/libasync-doc/html/ docs@rsync.managarm.org::docs/libasync

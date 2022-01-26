@@ -1,0 +1,45 @@
+name: Tests and coverage
+on:
+  push:
+  pull_request:
+
+permissions:
+  statuses: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    container:
+      # XXX(arsen): stop doing this when GCC 11 is in Ubuntu LTS
+      image: ubuntu:impish
+    steps:
+      - uses: actions/checkout@v2
+      - name: Get dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get -y install python3-dev libxml2-dev libxslt1-dev \
+                             cmake libyaml-dev libclang-dev llvm-dev \
+                             libglib2.0-dev libjson-glib-dev flex \
+                             ninja-build build-essential python3-pip \
+                             git libgtest-dev
+          pip3 install -U meson hotdoc gcovr
+      - name: Build
+        run: |
+          git clone --depth=1 https://github.com/managarm/frigg.git subprojects/frigg
+          meson --buildtype=debug -Dbuild_tests=true -Db_coverage=true build
+          cd build
+          ninja test
+          ninja coverage-html
+          ninja coverage-xml
+          ninja coverage-text
+          ninja coverage-sonarqube
+      - name: Upload coverage reports as artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: coverages
+          path: |
+            build/meson-logs/coverage.xml
+            build/meson-logs/sonarqube.xml
+            build/meson-logs/coverage.txt
+            build/meson-logs/coveragereport/
