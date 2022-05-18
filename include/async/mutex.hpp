@@ -309,8 +309,7 @@ namespace detail {
 				}else{
 					assert(!shared_cnt_);
 					st_ = state::shared;
-					shared_cnt_ = 1;
-					while(waiters_.front()->desired == state::shared) {
+					while(!waiters_.empty() && waiters_.front()->desired == state::shared) {
 						pending.push_back(waiters_.pop_front());
 						++shared_cnt_;
 					}
