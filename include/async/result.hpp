@@ -71,7 +71,7 @@ struct result {
 		friend struct result_operation;
 
 		result get_return_object() {
-			return {corons::coroutine_handle<promise_type>::from_promise(*this)};
+			return {std::coroutine_handle<promise_type>::from_promise(*this)};
 		}
 
 		void unhandled_exception() {
@@ -96,7 +96,7 @@ struct result {
 					return false;
 				}
 
-				void await_suspend(corons::coroutine_handle<void>) {
+				void await_suspend(std::coroutine_handle<void>) {
 					// Do nothing.
 				}
 
@@ -119,7 +119,7 @@ struct result {
 					return false;
 				}
 
-				void await_suspend(corons::coroutine_handle<void>) noexcept {
+				void await_suspend(std::coroutine_handle<void>) noexcept {
 					auto cfp = promise_->cfp_.exchange(coroutine_cfp::past_suspend,
 							std::memory_order_release);
 					if(cfp == coroutine_cfp::past_start) {
@@ -147,7 +147,7 @@ struct result {
 	result()
 	: h_{} { }
 
-	result(corons::coroutine_handle<promise_type> h)
+	result(std::coroutine_handle<promise_type> h)
 	: h_{h} { }
 
 	result(const result &) = delete;
@@ -168,7 +168,7 @@ struct result {
 	}
 
 private:
-	corons::coroutine_handle<promise_type> h_;
+	std::coroutine_handle<promise_type> h_;
 };
 
 
@@ -185,7 +185,7 @@ struct result<void> {
 		friend struct result_operation;
 
 		result get_return_object() {
-			return {corons::coroutine_handle<promise_type>::from_promise(*this)};
+			return {std::coroutine_handle<promise_type>::from_promise(*this)};
 		}
 
 		void unhandled_exception() {
@@ -205,7 +205,7 @@ struct result<void> {
 					return false;
 				}
 
-				void await_suspend(corons::coroutine_handle<void>) {
+				void await_suspend(std::coroutine_handle<void>) {
 					// Do nothing.
 				}
 
@@ -228,7 +228,7 @@ struct result<void> {
 					return false;
 				}
 
-				void await_suspend(corons::coroutine_handle<void>) noexcept {
+				void await_suspend(std::coroutine_handle<void>) noexcept {
 					auto cfp = promise_->cfp_.exchange(coroutine_cfp::past_suspend,
 							std::memory_order_release);
 					if(cfp == coroutine_cfp::past_start) {
@@ -256,7 +256,7 @@ struct result<void> {
 	result()
 	: h_{} { }
 
-	result(corons::coroutine_handle<promise_type> h)
+	result(std::coroutine_handle<promise_type> h)
 	: h_{h} { }
 
 	result(const result &) = delete;
@@ -277,7 +277,7 @@ struct result<void> {
 	}
 
 private:
-	corons::coroutine_handle<promise_type> h_;
+	std::coroutine_handle<promise_type> h_;
 };
 
 template<typename T, typename R>

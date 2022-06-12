@@ -26,13 +26,7 @@ namespace async::platform {
 #include <async/platform.hpp>
 #endif
 
-#if __has_include(<coroutine>) && !defined(LIBASYNC_FORCE_USE_EXPERIMENTAL)
 #include <coroutine>
-namespace corons = std;
-#else
-#include <experimental/coroutine>
-namespace corons = std::experimental;
-#endif
 
 namespace async {
 
@@ -77,7 +71,7 @@ public:
 		return false;
 	}
 
-	bool await_suspend(corons::coroutine_handle<> h) {
+	bool await_suspend(std::coroutine_handle<> h) {
 		h_ = h;
 		return !execution::start_inline(operation_);
 	}
@@ -87,7 +81,7 @@ public:
 	}
 
 	execution::operation_t<S, receiver> operation_;
-	corons::coroutine_handle<> h_;
+	std::coroutine_handle<> h_;
 	frg::optional<T> result_;
 };
 
@@ -116,7 +110,7 @@ public:
 		return false;
 	}
 
-	bool await_suspend(corons::coroutine_handle<> h) {
+	bool await_suspend(std::coroutine_handle<> h) {
 		h_ = h;
 		return !execution::start_inline(operation_);
 	}
@@ -126,7 +120,7 @@ public:
 	}
 
 	execution::operation_t<S, receiver> operation_;
-	corons::coroutine_handle<> h_;
+	std::coroutine_handle<> h_;
 };
 
 // ----------------------------------------------------------------------------
@@ -439,11 +433,11 @@ struct detached {
 			return {};
 		}
 
-		corons::suspend_never initial_suspend() {
+		std::suspend_never initial_suspend() {
 			return {};
 		}
 
-		corons::suspend_never final_suspend() noexcept {
+		std::suspend_never final_suspend() noexcept {
 			return {};
 		}
 
