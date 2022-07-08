@@ -349,10 +349,10 @@ run(Sender s) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	if (execution::start_inline(operation))
-		return std::move(*st.value);
+	if (!execution::start_inline(operation))
+		platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
 
-	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
+	return std::move(*st.value);
 }
 
 template<typename Sender, typename IoService>
