@@ -1,7 +1,3 @@
----
-short-description: Generic coroutine promise and sender type
-...
-
 # result
 
 ```cpp

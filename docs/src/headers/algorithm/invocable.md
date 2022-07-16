@@ -1,7 +1,3 @@
----
-short-description: The invocable algorithm
-...
-
 # invocable
 
 `invocable` is an operation that executes the given functor and completes inline

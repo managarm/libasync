@@ -1,7 +1,3 @@
----
-short-description: The when_all algorithm
-...
-
 # when_all
 
 `when_all` is an operation that starts all the given senders concurrently, and

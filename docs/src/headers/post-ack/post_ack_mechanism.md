@@ -1,7 +1,3 @@
----
-short-description: post-ack producer class
-...
-
 # post_ack_mechanism
 
 `post_ack_mechanism` is the producer class of post-ack. It can asynchronously

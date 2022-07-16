@@ -1,7 +1,3 @@
----
-short-description: post-ack value handle class
-...
-
 # post_ack_handle
 
 `post_ack_handle` is the value handle class of post-ack. It has methods to obtain

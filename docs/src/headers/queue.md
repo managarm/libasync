@@ -1,7 +1,3 @@
----
-short-description: Asynchronous queue
-...
-
 # queue
 
 ```cpp

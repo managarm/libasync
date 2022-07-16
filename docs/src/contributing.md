@@ -1,7 +1,3 @@
----
-short-description: Contributing to libasync
-...
-
 # Contributing
 
 Any kind of contributions to libasync are welcome, and greatly appreciated.

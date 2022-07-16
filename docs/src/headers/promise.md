@@ -1,7 +1,3 @@
----
-short-description: Promise and future types
-...
-
 # promise
 
 ```cpp

@@ -1,7 +1,3 @@
----
-short-description: Future type
-...
-
 # future
 
 `future` is a type that can be used to await a value from the promise. The

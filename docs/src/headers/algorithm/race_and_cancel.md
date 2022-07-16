@@ -1,7 +1,3 @@
----
-short-description: The race_and_cancel algorithm
-...
-
 # race_and_cancel
 
 `race_and_cancel` is an operation that obtains senders using the given functors,

@@ -1,7 +1,3 @@
----
-short-description: Promise type
-...
-
 # promise
 
 `promise` is a type that can be used to set a value that can be awaited via a `future`.

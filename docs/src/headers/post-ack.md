@@ -1,9 +1,3 @@
----
-short-description: >-
-  Classes for a producer-consumer data structure which requires
-  the consumers to acknowledge the value
-...
-
 # post-ack
 
 ```cpp

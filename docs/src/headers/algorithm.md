@@ -1,7 +1,3 @@
----
-short-description: Primitive algorithms provided by libasync
-...
-
 # algorithm
 
 ```cpp

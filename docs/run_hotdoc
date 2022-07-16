@@ -1,7 +1,0 @@
-#!/bin/sh
-[ -n "${MESON_BUILD_ROOT}" ] || [ -f "$1" ] || {
-	>&2 echo "invalid invocation"
-	exit 1
-}
-cd "${MESON_BUILD_ROOT}" || exit 1
-exec hotdoc run --conf-file "$1"

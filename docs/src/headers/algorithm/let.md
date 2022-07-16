@@ -1,7 +1,3 @@
----
-short-description: The let algorithm
-...
-
 # let
 
 `let` is an operation that obtains a value using the given functor, stores it in

@@ -1,7 +1,3 @@
----
-short-description: Coroutine promise type used for awaiting operation completion and related functions
-...
-
 # sender_awaiter and make_awaiter
 
 `sender_awaiter` is a coroutine promise type that allows for awaiting a sender.

@@ -1,7 +1,3 @@
----
-short-description: Asynchronous shared mutex
-...
-
 # shared_mutex
 
 `shared_mutex` is a mutex which supports asynchronous acquisition. It can be

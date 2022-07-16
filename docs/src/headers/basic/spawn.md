@@ -1,7 +1,3 @@
----
-short-description: Function for spawning a detached operation
-...
-
 # spawn_with_allocator
 
 `spawn_with_allocator` is a function that takes a sender and a receiver, connects

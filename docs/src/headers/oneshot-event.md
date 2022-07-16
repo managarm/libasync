@@ -1,7 +1,3 @@
----
-short-description: Event type that can only be raised once
-...
-
 # oneshot_event
 
 ```cpp

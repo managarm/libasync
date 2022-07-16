@@ -1,7 +1,3 @@
----
-short-description: Senders, receivers and operations
-...
-
 # Senders, receivers, and operations
 
 libasync is in part built around the concept of senders and receivers. Using senders

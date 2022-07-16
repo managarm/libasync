@@ -1,7 +1,3 @@
----
-short-description: Basic functionality provided by libasync
-...
-
 # basic
 
 ```cpp

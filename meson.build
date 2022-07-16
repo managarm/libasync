@@ -27,17 +27,4 @@ if get_option('build_tests')
 	subdir('tests')
 endif
 
-if get_option('enable_docs')
-	hotdoc = import('hotdoc')
-	docs = hotdoc.generate_doc('libasync',
-		project_name : 'libasync',
-		project_version : '0',
-		sitemap : 'docs/sitemap',
-		index : 'docs/src/index.md',
-		extra_assets : [ 'docs/assets/' ]
-	)
-
-	run_target('build-doc',
-		command : [ files('docs/run_hotdoc'), docs.config_path() ]
-	)
-endif
+subdir('docs')

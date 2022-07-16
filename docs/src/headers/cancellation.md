@@ -1,7 +1,3 @@
----
-short-description: Support classes for cancellation
-...
-
 # cancellation
 
 ```cpp

@@ -1,7 +1,3 @@
----
-short-description: Event type that can be raised multiple times
-...
-
 # recurring_event
 
 ```cpp

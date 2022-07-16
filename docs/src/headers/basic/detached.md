@@ -1,7 +1,3 @@
----
-short-description: Functions and classes for detached coroutines
-...
-
 # detached, detach and detach_with_allocator
 
 `detached` is a coroutine type used for detached coroutines. Detached coroutines
