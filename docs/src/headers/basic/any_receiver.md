@@ -1,7 +1,3 @@
----
-short-description: Wrapper type that wraps around any receiver type
-...
-
 # any_receiver
 
 `any_receiver` is a wrapper type that wraps around any receiver type and handles

@@ -1,7 +1,3 @@
----
-short-description: The ite algorithm
-...
-
 # ite
 
 `ite` is an operation that checks the given condition, and starts the "then" or

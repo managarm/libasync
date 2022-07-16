@@ -1,7 +1,3 @@
----
-short-description: Operation which suspends until it's cancelled
-...
-
 # suspend_indefinitely
 
 `suspend_indefinitely` is an operation that suspends until it is cancelled.

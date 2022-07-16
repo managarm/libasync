@@ -1,7 +1,3 @@
----
-short-description: The IO service
-...
-
 # IO service
 
 The IO service is an user-provided class which manages waiting for events and

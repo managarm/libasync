@@ -1,7 +1,3 @@
----
-short-description: Classes used to observe a cancellation
-...
-
 # cancellation_callback and cancellation_observer
 
 `cancellation_callback` registers a callback that will be invoked when

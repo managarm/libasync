@@ -1,7 +1,3 @@
----
-short-description: The sequence algorithm
-...
-
 # sequence
 
 `sequence` is an operation that sequentially starts the given senders.

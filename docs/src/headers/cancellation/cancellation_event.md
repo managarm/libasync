@@ -1,7 +1,3 @@
----
-short-description: Classes used to request cancellation of an operation
-...
-
 # cancellation_event and cancellation_token
 
 `cancellation_event` is a type that is used to request cancellation of an

@@ -1,7 +1,3 @@
----
-short-description: Asynchronous mutex
-...
-
 # mutex
 
 `mutex` is a mutex which supports asynchronous acquisition. When the mutex is

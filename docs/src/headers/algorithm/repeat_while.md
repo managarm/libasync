@@ -1,7 +1,3 @@
----
-short-description: The repeat_while algorithm
-...
-
 # repeat_while
 
 `repeat_while` is an operation that continuously checks the given condition, and

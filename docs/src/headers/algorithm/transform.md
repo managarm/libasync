@@ -1,7 +1,3 @@
----
-short-description: The transform algorithm
-...
-
 # transform
 
 `transform` is an operation that starts the given sender, and upon completion

@@ -1,7 +1,3 @@
----
-short-description: CPO objects for the start, set_value and connect functions
-...
-
 # execution
 
 ```cpp

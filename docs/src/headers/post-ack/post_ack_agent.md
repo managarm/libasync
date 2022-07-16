@@ -1,11 +1,7 @@
----
-short-description: post-ack consumer class
-...
-
 # post_ack_agent
 
 `post_ack_agent` is the consumer class of post-ack. It can asynchronously poll
-for a value produced by the observed [](headers/post-ack/post_ack_mechanism.md).
+for a value produced by the observed [post_ack_mechanism](headers/post-ack/post_ack_mechanism.md).
 
 ## Prototype
 

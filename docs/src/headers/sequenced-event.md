@@ -1,9 +1,3 @@
----
-short-description: >-
-  Event type that maintains a sequence number to detect missed
-  raises and can be raised multiple times
-...
-
 # sequenced_event
 
 ```cpp
