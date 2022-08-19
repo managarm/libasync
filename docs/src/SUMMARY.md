@@ -23,6 +23,7 @@
     - [spawn](headers/basic/spawn.md)
   - [async/result.hpp](headers/result.md)
   - [async/oneshot.hpp](headers/oneshot-event.md)
+  - [async/wait-group.hpp](headers/wait-group.md)
   - [async/recurring.hpp](headers/recurring-event.md)
   - [async/sequenced.hpp](headers/sequenced-event.md)
   - [async/cancellation.hpp](headers/cancellation.md)
