@@ -2,6 +2,7 @@
 
 /* refactored from oneshot_event */
 
+#include <async/execution.hpp>
 #include <atomic>
 #include <async/algorithm.hpp>
 #include <async/cancellation.hpp>
@@ -172,5 +173,77 @@ private:
 		>
 	> queue_;
 };
+
+namespace wait_in_group_details_ {
+template<typename OriginalS>
+struct [[nodiscard]] sender_ {
+	using value_type = typename OriginalS::value_type;
+	wait_group &wg_;
+	OriginalS originals_;
+
+	template<typename OriginalR>
+	struct operation_ {
+		OriginalR originalr_;
+		wait_group &wg_;
+
+		struct receiver_ {
+			operation_ &op_;
+
+			/* receiver bits */
+			template<typename... Ts>
+			requires(sizeof...(Ts) <= 1)
+			void set_value_inline(Ts &&...ts) {
+				op_.wg_.done();
+				execution::set_value_inline(
+					op_.originalr_,
+					std::forward<Ts>(ts)...
+				);
+			}
+
+			template<typename... Ts>
+			requires(sizeof...(Ts) <= 1)
+			void set_value_noinline(Ts &&...ts) {
+				op_.wg_.done();
+				execution::set_value_noinline(
+					op_.originalr_,
+					std::forward<Ts>(ts)...
+				);
+			}
+		};
+
+		execution::operation_t<OriginalS, receiver_> originalop_;
+
+		operation_(sender_ s, OriginalR r)
+			: originalr_(std::move(r))
+			, wg_(s.wg_)
+			, originalop_(execution::connect(std::move(s.originals_), receiver_{*this}))
+		{}
+
+		bool start_inline() {
+			wg_.add(1);
+			return execution::start_inline(originalop_);
+		}
+
+		operation_(const operation_&) = delete;
+		operation_ &operator =(const operation_&) = delete;
+	};
+
+	async::sender_awaiter<sender_, typename OriginalS::value_type>
+	friend operator co_await(sender_ &&s) {
+		return { std::move(s) };
+	}
+};
+template<typename OS, typename R>
+auto connect(sender_<OS> s, R r) {
+	using op = typename sender_<OS>::template operation_<R>;
+	return op { std::move(s), std::move(r) };
+}
+} // namespace wait_in_group_details_
+
+template<typename Original>
+wait_in_group_details_::sender_<std::remove_reference_t<Original>>
+wait_in_group(wait_group &wg, Original &&to_wrap) {
+	return {wg, std::forward<Original>(to_wrap)};
+}
 
 } // namespace async
