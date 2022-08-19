@@ -10,6 +10,10 @@ being done in parallel, and a few consumers waiting for that work to be done.
 The amount of work is increased by calls to `add()` and decreased by calls to
 `done()`.
 
+This struct also implements
+[BasicLockable](https://en.cppreference.com/w/cpp/named_req/BasicLockable) so
+that it can be used with `std::unique_lock`.
+
 ## Prototype
 
 ```cpp
@@ -19,6 +23,9 @@ struct wait_group {
 
 	sender wait(cancellation_token ct); // (3)
 	sender wait(); // (4)
+
+	void lock(); // (5)
+	void unlock(); // (6)
 };
 ```
 
@@ -27,6 +34,8 @@ struct wait_group {
 3. Returns a sender for the wait operation. The operation waits for the counter
    to drop to zero.
 4. Same as (3) but it cannot be cancelled.
+5. Equivalent to `add(1)`.
+5. Equivalent to `done()`.
 
 ### Arguments
 

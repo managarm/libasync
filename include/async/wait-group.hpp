@@ -155,6 +155,9 @@ public:
 		});
 	}
 
+	/* BasicLockable support */
+	void lock() { add(1); }
+	void unlock() { done(); }
 private:
 	platform::mutex mutex_;
 
