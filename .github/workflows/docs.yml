@@ -39,4 +39,4 @@ jobs:
         env:
           RSYNC_PASSWORD: ${{ secrets.RSYNC_DOCUMENTATION_PASSWD }}
         run: |
-          rsync-ssl -a --delete build/libasync-doc/html/ docs@rsync.managarm.org::docs/libasync
+          rsync-ssl -a --delete build/docs/libasync-doc/ docs@rsync.managarm.org::docs/libasync
