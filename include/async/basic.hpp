@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <concepts>
+#include <type_traits>
 
 #include <async/execution.hpp>
 #include <frg/list.hpp>
@@ -156,11 +157,12 @@ public:
 template<typename T>
 struct any_receiver {
 	template<typename R>
+	requires (
+	   std::is_trivially_copyable_v<R>
+	&& sizeof(R) <= sizeof(void *)
+	&& alignof(R) <= alignof(void *)
+	)
 	any_receiver(R receiver) {
-		static_assert(std::is_trivially_copyable_v<R>);
-		static_assert(sizeof(R) <= sizeof(void *));
-		static_assert(alignof(R) <= alignof(void *));
-
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p, T value) {
 			auto *rp = static_cast<R *>(p);
@@ -184,8 +186,12 @@ private:
 template<>
 struct any_receiver<void> {
 	template<typename R>
+	requires (
+	   std::is_trivially_copyable_v<R>
+	&& sizeof(R) <= sizeof(void *)
+	&& alignof(R) <= alignof(void *)
+	)
 	any_receiver(R receiver) {
-		static_assert(std::is_trivially_copyable_v<R>);
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p) {
 			auto *rp = static_cast<R *>(p);
@@ -227,10 +233,13 @@ public:
 	callback()
 	: _function(nullptr) { }
 
-	template<typename F, typename = std::enable_if_t<
-			sizeof(F) == sizeof(void *) && alignof(F) == alignof(void *)
-			&& std::is_trivially_copy_constructible<F>::value
-			&& std::is_trivially_destructible<F>::value>>
+	template<typename F>
+	requires (
+	   sizeof(F) <= sizeof(void*)
+	&& alignof(F) <= alignof(void*)
+	&& std::is_trivially_copy_constructible_v<F>
+	&& std::is_trivially_destructible_v<F>
+	)
 	callback(F functor)
 	: _function(&invoke<F>) {
 		new (&_object) F{std::move(functor)};
@@ -323,8 +332,8 @@ void run_forever(IoService ios) {
 }
 
 template<typename Sender>
-std::enable_if_t<std::is_same_v<typename Sender::value_type, void>, void>
-run(Sender s) {
+requires std::same_as<typename Sender::value_type, void>
+void run(Sender s) {
 	struct receiver {
 		void set_value_inline() { }
 
@@ -339,9 +348,8 @@ run(Sender s) {
 }
 
 template<typename Sender>
-std::enable_if_t<!std::is_same_v<typename Sender::value_type, void>,
-		typename Sender::value_type>
-run(Sender s) {
+requires (!std::same_as<typename Sender::value_type, void>)
+typename Sender::value_type run(Sender s) {
 	struct state {
 		frg::optional<typename Sender::value_type> value;
 	};
@@ -372,8 +380,8 @@ run(Sender s) {
 }
 
 template<typename Sender, typename IoService>
-std::enable_if_t<std::is_same_v<typename Sender::value_type, void>, void>
-run(Sender s, IoService ios) {
+requires std::same_as<typename Sender::value_type, void>
+void run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
 	};
@@ -406,9 +414,8 @@ run(Sender s, IoService ios) {
 }
 
 template<typename Sender, typename IoService>
-std::enable_if_t<!std::is_same_v<typename Sender::value_type, void>,
-		typename Sender::value_type>
-run(Sender s, IoService ios) {
+requires (!std::same_as<typename Sender::value_type, void>)
+typename Sender::value_type run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
 		frg::optional<typename Sender::value_type> value;
