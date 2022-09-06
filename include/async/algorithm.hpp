@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <concepts>
 
 #include <async/basic.hpp>
 #include <async/cancellation.hpp>
@@ -141,7 +142,7 @@ template<typename Sender, typename F>
 struct [[nodiscard]] transform_sender;
 
 template<typename Sender, typename F>
-requires (!std::is_same_v<typename Sender::value_type, void>)
+requires (!std::same_as<typename Sender::value_type, void>)
 struct [[nodiscard]] transform_sender<Sender, F> {
 	using value_type = std::invoke_result_t<F, typename Sender::value_type>;
 
@@ -160,7 +161,7 @@ struct [[nodiscard]] transform_sender<Sender, F> {
 };
 
 template<typename Sender, typename F>
-requires std::is_same_v<typename Sender::value_type, void>
+requires std::same_as<typename Sender::value_type, void>
 struct [[nodiscard]] transform_sender<Sender, F> {
 	using value_type = std::invoke_result_t<F>;
 
