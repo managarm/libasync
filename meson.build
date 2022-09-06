@@ -20,6 +20,7 @@ if get_option('install_headers')
 		'include/async/recurring-event.hpp',
 		'include/async/result.hpp',
 		'include/async/sequenced-event.hpp',
+		'include/async/wait-group.hpp',
 		subdir : 'async/')
 endif
 
