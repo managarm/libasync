@@ -324,7 +324,12 @@ private:
 // Top-level execution functions.
 // ----------------------------------------------------------------------------
 
-template<typename IoService>
+template<typename T>
+concept Waitable = requires (T t) {
+	t.wait();
+};
+
+template<Waitable IoService>
 void run_forever(IoService ios) {
 	while(true) {
 		ios.wait();
@@ -379,7 +384,7 @@ typename Sender::value_type run(Sender s) {
 	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
 }
 
-template<typename Sender, typename IoService>
+template<typename Sender, Waitable IoService>
 requires std::same_as<typename Sender::value_type, void>
 void run(Sender s, IoService ios) {
 	struct state {
