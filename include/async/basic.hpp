@@ -37,6 +37,57 @@ namespace corons = std::experimental;
 #endif
 
 namespace async {
+template<typename T, typename Value>
+concept Receives = std::movable<T>
+&& (std::same_as<Value, void> ?
+requires(T t) {
+	{ t.set_value_inline() } -> std::same_as<void>;
+	{ t.set_value_noinline() } -> std::same_as<void>;
+}
+: requires(T t) {
+	{ t.set_value_inline(std::declval<Value>()) } -> std::same_as<void>;
+	{ t.set_value_noinline(std::declval<Value>()) } -> std::same_as<void>;
+});
+
+namespace helpers {
+template<auto>
+struct dummy_receiver {
+	template<typename T>
+	requires (!std::same_as<T, void>)
+	void set_value_inline(T) {
+		assert(std::is_constant_evaluated());
+	}
+	void set_value_inline() {
+		assert(std::is_constant_evaluated());
+	}
+
+	template<typename T>
+	requires (!std::same_as<T, void>)
+	void set_value_noinline(T) {
+		assert(std::is_constant_evaluated());
+	}
+	void set_value_noinline() {
+		assert(std::is_constant_evaluated());
+	}
+};
+static_assert(Receives<dummy_receiver<[]{}>, void>);
+static_assert(Receives<dummy_receiver<[]{}>, int>);
+} /* namespace helpers */
+
+template<typename T>
+concept Operation = !std::movable<T> && requires(T &t) {
+	{ execution::start_inline(t) } -> std::same_as<bool>;
+};
+
+/* We require move constructible, rather than movable, since lambdas can be
+ * move constructible but not movable
+ */
+template<typename T>
+concept Sender = std::move_constructible<T> && requires(T t) {
+	typename T::value_type;
+	{ execution::connect(std::move(t), helpers::dummy_receiver<[]{}>{}) }
+		-> Operation;
+};
 
 template<typename E>
 requires requires(E &&e) { operator co_await(std::forward<E>(e)); }
@@ -54,6 +105,9 @@ auto make_awaiter(E &&e) {
 // sender_awaiter template.
 // ----------------------------------------------------------------------------
 
+/* we can't declare S a sender here, since, if we do, it'd be impossible to
+ * declare a member co_await that returns a sender_awaiter
+ */
 template<typename S, typename T = void>
 struct [[nodiscard]] sender_awaiter {
 private:
@@ -321,7 +375,7 @@ void run_forever(IoService ios) {
 	}
 }
 
-template<typename Sender>
+template<Sender Sender>
 requires std::same_as<typename Sender::value_type, void>
 void run(Sender s) {
 	struct receiver {
@@ -337,7 +391,7 @@ void run(Sender s) {
 	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
 }
 
-template<typename Sender>
+template<Sender Sender>
 requires (!std::same_as<typename Sender::value_type, void>)
 typename Sender::value_type run(Sender s) {
 	struct state {
@@ -369,7 +423,7 @@ typename Sender::value_type run(Sender s) {
 	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
 }
 
-template<typename Sender, Waitable IoService>
+template<Sender Sender, Waitable IoService>
 requires std::same_as<typename Sender::value_type, void>
 void run(Sender s, IoService ios) {
 	struct state {
@@ -403,7 +457,7 @@ void run(Sender s, IoService ios) {
 	}
 }
 
-template<typename Sender, typename IoService>
+template<Sender Sender, typename IoService>
 requires (!std::same_as<typename Sender::value_type, void>)
 typename Sender::value_type run(Sender s, IoService ios) {
 	struct state {
@@ -529,12 +583,12 @@ void detach_with_allocator(Allocator allocator, S sender) {
 	detach_with_allocator<Allocator, S>(std::move(allocator), std::move(sender), [] { });
 }
 
-template<typename S>
+template<Sender S>
 void detach(S sender) {
 	return detach_with_allocator(frg::stl_allocator{}, std::move(sender));
 }
 
-template<typename S, typename Cont>
+template<Sender S, typename Cont>
 void detach(S sender, Cont continuation) {
 	return detach_with_allocator(frg::stl_allocator{}, std::move(sender), std::move(continuation));
 }
