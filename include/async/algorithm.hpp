@@ -10,7 +10,7 @@
 
 namespace async {
 
-template<typename Sender, typename Receiver>
+template<Sender Sender, Receives<typename Sender::value_type> Receiver>
 struct connect_helper {
 	using operation = execution::operation_t<Sender, Receiver>;
 
@@ -22,7 +22,7 @@ struct connect_helper {
 	Receiver r;
 };
 
-template<typename Sender, typename Receiver>
+template<Sender Sender, Receives<typename Sender::value_type> Receiver>
 connect_helper<Sender, Receiver> make_connect_helper(Sender s, Receiver r) {
 	return {std::move(s), std::move(r)};
 }
@@ -59,7 +59,7 @@ template<typename F>
 struct [[nodiscard]] invocable_sender {
 	using value_type = std::invoke_result_t<F>;
 
-	template<typename R>
+	template<Receives<value_type> R>
 	invocable_operation<F, R> connect(R r) {
 		return {std::move(f), std::move(r)};
 	}
@@ -165,7 +165,7 @@ requires std::same_as<typename Sender::value_type, void>
 struct [[nodiscard]] transform_sender<Sender, F> {
 	using value_type = std::invoke_result_t<F>;
 
-	template<typename Receiver>
+	template<Receives<value_type> Receiver>
 	friend auto connect(transform_sender s, Receiver dr) {
 		return execution::connect(std::move(s.ds),
 				void_transform_receiver<Receiver, F>{std::move(dr), std::move(s.f)});
@@ -234,7 +234,7 @@ struct [[nodiscard]] ite_sender {
 	ite_sender(C cond, ST then_s, SE else_s)
 	: cond_{std::move(cond)}, then_s_{std::move(then_s)}, else_s_{std::move(else_s)} { }
 
-	template<typename R>
+	template<Receives<value_type> R>
 	ite_operation<C, ST, SE, R> connect(R dr) {
 		return {std::move(cond_), std::move(then_s_), std::move(else_s_), std::move(dr)};
 	}
@@ -249,7 +249,8 @@ private:
 	SE else_s_;
 };
 
-template<typename C, typename ST, typename SE>
+template<std::invocable<> C, Sender ST, Sender SE>
+requires std::same_as<typename ST::value_type, typename SE::value_type>
 ite_sender<C, ST, SE> ite(C cond, ST then_s, SE else_s) {
 	return {std::move(cond), std::move(then_s), std::move(else_s)};
 }
@@ -326,7 +327,7 @@ struct repeat_while_sender {
 		return {std::move(*this)};
 	}
 
-	template<typename R>
+	template<Receives<value_type> R>
 	repeat_while_operation<C, SF, R> connect(R receiver) {
 		return {std::move(cond), std::move(factory), std::move(receiver)};
 	}
@@ -336,6 +337,10 @@ struct repeat_while_sender {
 };
 
 template<typename C, typename SF>
+requires std::move_constructible<C> && requires (C c, SF sf) {
+	{ c() } -> std::convertible_to<bool>;
+	{ sf() } -> Sender;
+}
 repeat_while_sender<C, SF> repeat_while(C cond, SF factory) {
 	return {std::move(cond), std::move(factory)};
 }
@@ -351,7 +356,7 @@ template<typename... Functors>
 struct race_and_cancel_sender {
 	using value_type = void;
 
-	template<typename Receiver>
+	template<Receives<value_type> Receiver>
 	friend race_and_cancel_operation<Receiver, frg::tuple<Functors...>,
 			std::index_sequence_for<Functors...>>
 	connect(race_and_cancel_sender s, Receiver r) {
@@ -450,7 +455,8 @@ operator co_await(race_and_cancel_sender<Functors...> s) {
 	return {std::move(s)};
 }
 
-template<typename... Functors>
+template<std::invocable<cancellation_token>... Functors>
+requires ((Sender<std::invoke_result_t<Functors, cancellation_token>>) && ...)
 race_and_cancel_sender<Functors...> race_and_cancel(Functors... fs) {
 	return {{std::move(fs)...}};
 }
@@ -495,7 +501,7 @@ struct [[nodiscard]] let_sender {
 	using imm_type = std::invoke_result_t<Pred>;
 	using value_type = typename std::invoke_result_t<Func, std::add_lvalue_reference_t<imm_type>>::value_type;
 
-	template<typename Receiver>
+	template<Receives<value_type> Receiver>
 	friend let_operation<Receiver, Pred, Func>
 	connect(let_sender s, Receiver r) {
 		return {std::move(s.pred), std::move(s.func), std::move(r)};
@@ -511,7 +517,10 @@ operator co_await(let_sender<Pred, Func> s) {
 	return {std::move(s)};
 }
 
-template <typename Pred, typename Func>
+template <std::invocable<> Pred, typename Func>
+requires requires (Func func, Pred pred) {
+	func(std::declval<std::add_lvalue_reference_t<decltype(pred())>>());
+}
 let_sender<Pred, Func> let(Pred pred, Func func) {
 	return {std::move(pred), std::move(func)};
 }
@@ -703,7 +712,7 @@ sequence_sender<Senders...> sequence(Senders ...senders) {
 	return {frg::tuple<Senders...>{std::move(senders)...}};
 }
 
-template <typename ...Senders>
+template <Sender ...Senders>
 sender_awaiter<sequence_sender<Senders...>, typename sequence_sender<Senders...>::value_type>
 operator co_await(sequence_sender<Senders...> s) {
 	return {std::move(s)};
@@ -778,7 +787,7 @@ template <typename ...Senders> requires (sizeof...(Senders) > 0)
 struct [[nodiscard]] when_all_sender {
 	using value_type = void;
 
-	template<typename Receiver>
+	template<Receives<value_type> Receiver>
 	friend when_all_operation<Receiver, Senders...>
 	connect(when_all_sender s, Receiver r) {
 		return {std::move(s.senders), std::move(r)};
@@ -787,7 +796,8 @@ struct [[nodiscard]] when_all_sender {
 	frg::tuple<Senders...> senders;
 };
 
-template <typename ...Senders> requires (sizeof...(Senders) > 0)
+template <Sender ...Senders>
+requires (sizeof...(Senders) > 0)
 when_all_sender<Senders...> when_all(Senders ...senders) {
 	return {frg::tuple<Senders...>{std::move(senders)...}};
 }
