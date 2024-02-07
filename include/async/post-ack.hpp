@@ -119,7 +119,7 @@ public:
 
 	struct [[nodiscard]] post_sender {
 		friend sender_awaiter<post_sender> operator co_await (post_sender sender) {
-			return {sender};
+			return {std::move(sender)};
 		}
 
 		template<typename R>
