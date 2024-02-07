@@ -20,7 +20,8 @@ sources = files(
 	'race.cpp',
 	'algorithm.cpp',
 	'promise.cpp',
-	'sequenced.cpp'
+	'sequenced.cpp',
+	'post-ack.cpp'
 )
 
 exe = executable('gtests',
