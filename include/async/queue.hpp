@@ -140,6 +140,10 @@ public:
 		return {this, ct};
 	}
 
+	bool empty() {
+		return buffer_.empty();
+	}
+
 	frg::optional<T> maybe_get() {
 		frg::unique_lock lock{mutex_};
 
