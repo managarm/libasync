@@ -199,7 +199,7 @@ public:
 	}
 
 	future(const future &other)
-	: state_{other.state}, alloc_{other.alloc} {
+	: state_{other.state_}, alloc_{other.alloc_} {
 		if (state_)
 			state_->ref();
 	}
