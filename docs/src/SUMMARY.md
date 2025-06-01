@@ -16,6 +16,7 @@
     - [sequence](headers/algorithm/sequence.md)
     - [when\_all](headers/algorithm/when_all.md)
   - [async/basic.hpp](headers/basic.md)
+    - [co\_awaits\_to](headers/basic/co_awaits_to.md)
     - [sender\_awaiter](headers/basic/sender_awaiter.md)
     - [any\_receiver](headers/basic/any_receiver.md)
     - [run and run_forever](headers/basic/run.md)
