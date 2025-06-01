@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <concepts>
 
 #include <async/execution.hpp>
 #include <frg/list.hpp>
@@ -47,6 +48,11 @@ requires requires(E &&e) { std::forward<E>(e).operator co_await(); }
 auto make_awaiter(E &&e) {
 	return std::forward<E>(e).operator co_await();
 }
+
+template <typename Awaitable, typename T>
+concept co_awaits_to = requires (Awaitable &&a) {
+	{ make_awaiter(std::forward<Awaitable>(a)).await_resume() } -> std::same_as<T>;
+};
 
 // ----------------------------------------------------------------------------
 // sender_awaiter template.

@@ -3,6 +3,11 @@
 #include <async/queue.hpp>
 #include <gtest/gtest.h>
 
+TEST(Basic, AwaitableConcept) {
+	ASSERT_TRUE((async::co_awaits_to<async::result<int>, int>));
+	ASSERT_TRUE(!(async::co_awaits_to<async::result<int>, float>));
+}
+
 TEST(Basic, CallCoroutine) {
 	int v = async::run([] (int *p) -> async::result<int> {
 		co_return 42;
