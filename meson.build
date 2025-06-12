@@ -7,6 +7,8 @@ libasync_inc = include_directories('include/')
 libasync_dep = declare_dependency(include_directories : libasync_inc)
 
 if get_option('install_headers')
+	pkgconfig = import('pkgconfig')
+
 	install_headers(
 		'include/async/algorithm.hpp',
 		'include/async/barrier.hpp',
@@ -23,6 +25,12 @@ if get_option('install_headers')
 		'include/async/sequenced-event.hpp',
 		'include/async/wait-group.hpp',
 		subdir : 'async/')
+
+	pkgconfig.generate(
+		name : 'libasync',
+		description : 'An async primitives library for C++20',
+		version : meson.project_version(),
+	)
 endif
 
 if get_option('build_tests')
