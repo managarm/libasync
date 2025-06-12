@@ -9,6 +9,7 @@ libasync_dep = declare_dependency(include_directories : libasync_inc)
 if get_option('install_headers')
 	install_headers(
 		'include/async/algorithm.hpp',
+		'include/async/barrier.hpp',
 		'include/async/basic.hpp',
 		'include/async/cancellation.hpp',
 		'include/async/execution.hpp',
