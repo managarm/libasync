@@ -15,6 +15,7 @@
     - [let](headers/algorithm/let.md)
     - [sequence](headers/algorithm/sequence.md)
     - [when\_all](headers/algorithm/when_all.md)
+    - [lambda](headers/algorithm/lambda.md)
   - [async/basic.hpp](headers/basic.md)
     - [co\_awaits\_to](headers/basic/co_awaits_to.md)
     - [sender\_awaiter](headers/basic/sender_awaiter.md)
