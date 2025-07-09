@@ -804,7 +804,7 @@ operator co_await(when_all_sender<Senders...> s) {
 template <typename R, typename Fn, typename ...Args>
 struct lambda_operation {
 	lambda_operation(R receiver, Fn fn, std::tuple<Args...> args)
-	: fn_{std::move(fn)}, op_{execution::connect(std::apply(fn, args), std::move(receiver))} { }
+	: fn_{std::move(fn)}, op_{execution::connect(std::apply(fn_, args), std::move(receiver))} { }
 
 	bool start_inline() {
 		return execution::start_inline(op_);

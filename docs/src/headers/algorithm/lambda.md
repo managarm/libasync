@@ -32,9 +32,6 @@ from the sender returned by `fn`.
 ## Examples
 
 ```cpp
-
-auto x = std::make_shared<int>(1);
-
 async::run(
 	async::race_and_cancel(
 		async::lambda(
