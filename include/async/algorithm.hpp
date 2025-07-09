@@ -451,7 +451,7 @@ operator co_await(race_and_cancel_sender<Functors...> s) {
 
 template<typename... Functors>
 race_and_cancel_sender<Functors...> race_and_cancel(Functors... fs) {
-	return {{fs...}};
+	return {{std::move(fs)...}};
 }
 
 //---------------------------------------------------------------------------------------
