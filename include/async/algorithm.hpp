@@ -797,4 +797,59 @@ operator co_await(when_all_sender<Senders...> s) {
 	return {std::move(s)};
 }
 
+//---------------------------------------------------------------------------------------
+// lambda()
+//---------------------------------------------------------------------------------------
+
+template <typename R, typename Fn, typename ...Args>
+struct lambda_operation {
+	lambda_operation(R receiver, Fn fn, std::tuple<Args...> args)
+	: fn_{std::move(fn)}, op_{execution::connect(std::apply(fn, args), std::move(receiver))} { }
+
+	bool start_inline() {
+		return execution::start_inline(op_);
+	}
+
+	Fn fn_;
+	execution::operation_t<std::invoke_result_t<Fn, Args...>, R> op_;
+};
+
+template <typename Fn, typename ...Args>
+struct [[nodiscard]] lambda_sender {
+	using value_type = std::invoke_result_t<Fn, Args...>::value_type;
+
+	Fn fn;
+	std::tuple<Args...> args;
+
+	template<typename Receiver>
+	friend lambda_operation<Receiver, Fn, Args...>
+	connect(lambda_sender s, Receiver r) {
+		return {std::move(r), std::move(s.fn), std::move(s.args)};
+	}
+};
+
+template <typename Fn, typename ...Args>
+sender_awaiter<lambda_sender<Fn, Args...>, typename lambda_sender<Fn, Args...>::value_type>
+operator co_await(lambda_sender<Fn, Args...> s) {
+	return {std::move(s)};
+}
+
+template <typename Fn>
+struct [[nodiscard]] lambda_callable {
+	template <typename ...Args>
+	auto operator()(Args &&...args) {
+		return lambda_sender{
+			std::move(fn),
+			std::forward_as_tuple(std::forward<Args>(args)...)
+		};
+	}
+
+	Fn fn;
+};
+
+template <typename Fn>
+auto lambda(Fn fn) {
+	return lambda_callable<Fn>{std::move(fn)};
+}
+
 } // namespace async
