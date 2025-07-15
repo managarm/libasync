@@ -30,15 +30,15 @@ if it's true, waits for the event to be raised.
 
 ### Arguments
 
- - `ct` - the cancellation token to use to listen for cancellation.
+- `ct` - the cancellation token to use to listen for cancellation.
 
 ### Return values
 
 1. This method doesn't return any value.
-2. This method returns a sender of unspecified type. The sender completes with either
-`true` to indicate success, or `false` to indicate that the wait was cancelled, or that
-the condition was false.
-3. Same as (2)
+2. This method returns a sender of unspecified type. The value_type is of type `wait_if_result`,
+which is `success` to indicate success, or `cancelled` to indicate that the wait was cancelled,
+or `conditionFailed` when the condition was false.
+3. This method returns `true` on success and `false` on cancellation.
 
 ## Examples
 
@@ -60,6 +60,7 @@ coro(3, ev);
 ```
 
 Possible output:
+
 ```
 1: Before wait
 2: Before wait
