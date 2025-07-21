@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <tuple>
 #include <frg/list.hpp>
 #include "basic.hpp"
 
@@ -161,7 +163,14 @@ struct cancellation_observer final : private abstract_cancellation_callback {
 		return false;
 	}
 
-	// TODO: provide a set() method that calls the handler inline if cancellation is requested.
+	// Either set up this observer or call into the handler.
+	// Note that calling try_reset() afterwards is always safe.
+	// In particular, try_set() only fails if cancellation has been triggered
+	// and try_reset() will simply fail in that case.
+	void force_set(cancellation_token token) {
+		if(!try_set(token))
+			_functor();
+	}
 
 	bool try_reset() {
 		if(!_event)
@@ -226,54 +235,117 @@ using detail::cancellation_token;
 using detail::cancellation_callback;
 using detail::cancellation_observer;
 
-template<typename Receiver>
+namespace {
+
+template<std::size_t D, typename T, typename U>
+auto make_uniform_array(U const& u) {
+	return std::apply(
+		[&](auto... e) {return std::array{((void) e, T(u))...};},
+		std::array<int, D>{}
+	);
+}
+
+}
+
+template<typename Receiver, size_t N>
 struct suspend_indefinitely_operation {
 private:
 	struct functor {
-		functor(suspend_indefinitely_operation *op)
+		functor(suspend_indefinitely_operation<Receiver, N> *op)
 		: op_{op} { }
 
 		void operator() () {
-			execution::set_value(op_->r_);
+			op_->transition_(state_cancel);
 		}
 
 	private:
-		suspend_indefinitely_operation *op_;
+		suspend_indefinitely_operation<Receiver, N> *op_;
 	};
 
 public:
-	suspend_indefinitely_operation(cancellation_token cancellation, Receiver r)
-	: cancellation_{cancellation}, r_{r}, obs_{this} { }
+	suspend_indefinitely_operation(std::array<cancellation_token, N> cancellation, Receiver r)
+	: cancellation_{cancellation}, r_{r}, obs_{make_uniform_array<N, cancellation_observer<functor>>(this)} { }
 
 	void start() {
-		if(!obs_.try_set(cancellation_))
-			execution::set_value(r_);
+		for (size_t i = 0; i < N; ++i)
+			obs_[i].force_set(cancellation_[i]);
+
+		transition_(state_init);
 	}
 
 private:
-	cancellation_token cancellation_;
+	void transition_(size_t state) {
+		assert(state == state_init || state_cancel);
+
+		// Set the init or cancel bit.
+		auto st = st_.fetch_or(state, std::memory_order_acq_rel);
+		auto new_st = st | state;
+
+		// We always decrement (st_ & state_ctr) by at least one.
+		// Note that this ensures that set_value() is only called after all calls to
+		// transition_() reach the fetch_sub() below.
+		size_t ctr = 1;
+
+		// Reset all observers once both init and cancel bits are set.
+		auto init_and_cancel = [] (size_t s) {
+			return (s & state_init) && (s & state_cancel);
+		};
+		if (!init_and_cancel(st) && init_and_cancel(new_st)) {
+			for (size_t i = 0; i < N; ++i) {
+				if(obs_[i].try_reset())
+					++ctr;
+			}
+		}
+
+		// Decrement (st_ & state_ctr).
+		// Note that we must not touch the this object afterwards.
+		auto final_st = st_.fetch_sub(ctr, std::memory_order_acq_rel);
+		assert(final_st & state_init);
+		assert(final_st & state_ctr);
+		assert((final_st & state_ctr) >= ctr);
+		if ((final_st & state_ctr) == ctr)
+			execution::set_value(r_);
+	}
+
+	// st_ stores an atomic state variable. There are two kinds of state transition:
+	// init and cancel. Both types of transition decrement (st_ & state_ctr).
+	// Additionally, the transitions set the state_init and state_cancel bits, respectively.
+	// When both state_init and state_cancel are set, we reset all cancellation observers.
+	// Note that this happens only once.
+
+	static constexpr size_t state_init = size_t(1) << 31;
+	static constexpr size_t state_cancel = size_t(1) << 30;
+	static constexpr size_t state_ctr = (size_t(1) << 30) - 1;
+
+	std::array<cancellation_token, N> cancellation_;
+	std::atomic<size_t> st_{N + 1};
 	Receiver r_;
-	cancellation_observer<functor> obs_;
+	std::array<cancellation_observer<functor>, N> obs_;
 	bool started_ = false;
 };
 
+template<size_t N>
+requires(N > 0)
 struct suspend_indefinitely_sender {
 	using value_type = void;
 
-	cancellation_token cancellation;
+	std::array<cancellation_token, N> cancellation;
 };
 
-template<typename Receiver>
-suspend_indefinitely_operation<Receiver> connect(suspend_indefinitely_sender s, Receiver r) {
+template<typename Receiver, size_t N>
+suspend_indefinitely_operation<Receiver, N> connect(suspend_indefinitely_sender<N> s, Receiver r) {
 	return {s.cancellation, std::move(r)};
 }
 
-inline sender_awaiter<suspend_indefinitely_sender> operator co_await(suspend_indefinitely_sender s) {
+template<size_t N>
+inline sender_awaiter<suspend_indefinitely_sender<N>> operator co_await(suspend_indefinitely_sender<N> s) {
 	return {s};
 }
 
-inline suspend_indefinitely_sender suspend_indefinitely(cancellation_token cancellation) {
-	return {cancellation};
+template<typename... C>
+requires(std::convertible_to<C, cancellation_token>&&...)
+inline suspend_indefinitely_sender<sizeof...(C)> suspend_indefinitely(C&&... cts) {
+	return {std::array<cancellation_token, sizeof...(C)>{cts...}};
 }
 
 } // namespace async
