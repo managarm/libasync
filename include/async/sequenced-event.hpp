@@ -23,7 +23,7 @@ struct sequenced_event {
 			auto seq = seq_.load(std::memory_order_acquire);
 			assert(seq >= in_seq);
 			return in_seq >= seq;
-		}, ct), [this] (bool) {
+		}, ct), [this] (auto) {
 			return seq_.load(std::memory_order_acquire);
 		});
 	}

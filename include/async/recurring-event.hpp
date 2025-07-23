@@ -1,6 +1,9 @@
 #pragma once
 
+#include <async/algorithm.hpp>
+#include <async/basic.hpp>
 #include <async/cancellation.hpp>
+#include <frg/expected.hpp>
 #include <frg/functional.hpp>
 #include <frg/list.hpp>
 
@@ -98,11 +101,11 @@ public:
 
 			if(retire_condfail) {
 				st_ = state::retired;
-				execution::set_value_inline(r_, false);
+				execution::set_value_inline(r_, maybe_awaited::condition_failed);
 				return true;
 			}else if(retire_cancelled) {
 				st_ = state::retired;
-				execution::set_value_inline(r_, true);
+				execution::set_value_inline(r_, maybe_cancelled::cancelled);
 				return true;
 			}
 			return false;
@@ -124,13 +127,13 @@ public:
 			}
 
 			st_ = state::retired;
-			execution::set_value_noinline(r_, true);
+			execution::set_value_noinline(r_, maybe_cancelled::cancelled);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset()) {
 				st_ = state::retired;
-				execution::set_value_noinline(r_, true);
+				execution::set_value_noinline(r_, maybe_awaited::awaited);
 			}
 		}
 
@@ -144,14 +147,14 @@ public:
 
 	template<typename C>
 	struct wait_if_sender {
-		using value_type = bool;
+		using value_type = frg::expected<maybe_cancelled, maybe_awaited>;
 
 		template<typename Receiver>
 		friend wait_if_operation<C, Receiver> connect(wait_if_sender s, Receiver r) {
 			return {s.evt, std::move(s.cond), s.ct, std::move(r)};
 		}
 
-		friend sender_awaiter<wait_if_sender, bool> operator co_await (wait_if_sender s) {
+		friend sender_awaiter<wait_if_sender, wait_if_sender<C>::value_type> operator co_await (wait_if_sender s) {
 			return {s};
 		}
 
@@ -161,15 +164,30 @@ public:
 	};
 
 	template<typename C>
-	wait_if_sender<C> async_wait_if(C cond, cancellation_token ct = {}) {
+	auto async_wait_if(C cond) {
+		return transform(wait_if_sender<C>{this, std::move(cond), async::cancellation_token{}},
+			[](wait_if_sender<C>::value_type result) -> bool {
+				assert(result);
+				return result.value() == maybe_awaited::awaited;
+			});
+	}
+
+	template<typename C>
+	wait_if_sender<C> async_wait_if(C cond, cancellation_token ct) {
 		return {this, std::move(cond), ct};
 	}
 
 	// Wait without checking for a condition. This is only really useful in single-threaded
 	// code, or when wakeup may be missed without causing confusion.
+	// returns true on successful await, and false on cancellation
 	auto async_wait(cancellation_token ct = {}) {
 		auto c = [] () -> bool { return true; };
-		return wait_if_sender<decltype(c)>{this, c, ct};
+		return async::transform(wait_if_sender<decltype(c)>{this, c, ct}, [](wait_if_sender<decltype(c)>::value_type s) -> bool {
+			// the condition above can never fail
+			assert(!s || s.value() != maybe_awaited::condition_failed);
+
+			return bool(s);
+		});
 	}
 
 private:

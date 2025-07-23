@@ -54,6 +54,16 @@ concept co_awaits_to = requires (Awaitable &&a) {
 	{ make_awaiter(std::forward<Awaitable>(a)).await_resume() } -> std::same_as<T>;
 };
 
+enum class maybe_cancelled {
+    not_cancelled,
+    cancelled,
+};
+
+enum class maybe_awaited {
+    awaited,
+    condition_failed,
+};
+
 // ----------------------------------------------------------------------------
 // sender_awaiter template.
 // ----------------------------------------------------------------------------

@@ -838,7 +838,7 @@ template <typename Fn>
 struct [[nodiscard]] lambda_callable {
 	template <typename ...Args>
 	auto operator()(Args &&...args) {
-		return lambda_sender{
+		return lambda_sender<Fn, Args...>{
 			std::move(fn),
 			std::forward_as_tuple(std::forward<Args>(args)...)
 		};
