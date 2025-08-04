@@ -300,11 +300,12 @@ private:
 		// Decrement (st_ & state_ctr).
 		// Note that we must not touch the this object afterwards.
 		auto final_st = st_.fetch_sub(ctr, std::memory_order_acq_rel);
-		assert(final_st & state_init);
-		assert(final_st & state_ctr);
 		assert((final_st & state_ctr) >= ctr);
-		if ((final_st & state_ctr) == ctr)
+		if ((final_st & state_ctr) == ctr) {
+			assert(final_st & state_init);
+			assert(final_st & state_ctr);
 			execution::set_value(r_);
+		}
 	}
 
 	// st_ stores an atomic state variable. There are two kinds of state transition:
