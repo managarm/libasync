@@ -11,7 +11,8 @@ else
 endif
 
 deps += subproject('frigg').get_variable('frigg_dep')
-deps += dependency('gtest', main : true)
+deps += dependency('gtest')
+deps += dependency('gtest_main')
 
 sources = files(
 	'basic.cpp',
