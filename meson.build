@@ -35,6 +35,7 @@ endif
 
 if get_option('build_tests')
 	subdir('tests')
+	subdir('benchmarks')
 endif
 
 subdir('docs')
