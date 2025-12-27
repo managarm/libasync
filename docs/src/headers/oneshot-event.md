@@ -62,3 +62,9 @@ After raise
 Before wait
 After wait
 ```
+
+# oneshot_primitive
+
+`oneshot_primitive` is a basic event data type that is often useful as a
+building block for higher level abstractions.
+Its functionality is identical to `oneshot_event` except that it does not support cancellation.

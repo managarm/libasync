@@ -11,26 +11,11 @@ else
 endif
 
 deps += subproject('frigg').get_variable('frigg_dep')
-deps += dependency('gtest')
-deps += dependency('gtest_main')
+deps += dependency('benchmark_main')
 
-sources = files(
-	'basic.cpp',
-	'queue.cpp',
-	'mutex.cpp',
-	'race.cpp',
-	'algorithm.cpp',
+exe = executable('bench',
 	'oneshot.cpp',
-	'promise.cpp',
-	'sequenced.cpp',
-	'post-ack.cpp'
-)
-
-exe = executable('gtests',
-	sources,
 	cpp_args : cpp_args,
 	dependencies : deps)
 
-test('gtest test', exe)
-
-
+benchmark('bench', exe)
