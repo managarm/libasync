@@ -20,6 +20,7 @@ sources = files(
 	'mutex.cpp',
 	'race.cpp',
 	'algorithm.cpp',
+	'oneshot.cpp',
 	'promise.cpp',
 	'sequenced.cpp',
 	'post-ack.cpp'
