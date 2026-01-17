@@ -15,6 +15,7 @@ deps += dependency('benchmark_main')
 
 exe = executable('bench',
 	'oneshot.cpp',
+	'mutex.cpp',
 	cpp_args : cpp_args,
 	dependencies : deps)
 

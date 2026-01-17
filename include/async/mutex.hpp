@@ -36,16 +36,44 @@ namespace detail {
 			: self_{self}, receiver_{std::move(receiver)} { }
 
 			bool start_inline() {
+				// Avoid taking mutex_ if possible.
+				if (self_->try_lock()) {
+					execution::set_value_inline(receiver_);
+					return true;
+				}
+
 				{
 					frg::unique_lock lock(self_->mutex_);
 
-					if(!self_->locked_) {
-						// Fast path.
-						self_->locked_ = true;
-					}else{
-						// Slow path.
-						self_->waiters_.push_back(this);
-						return false;
+					auto st = self_->st_.load(std::memory_order_relaxed);
+					while (true) {
+						if (st == state::none) {
+							bool success = self_->st_.compare_exchange_weak(
+								st,
+								state::locked,
+								std::memory_order_acquire,
+								std::memory_order_relaxed
+							);
+							if (success)
+								break;
+						} else if (st == state::locked) {
+							// CAS since there can be concurrent transitions from state::locked.
+							bool success = self_->st_.compare_exchange_weak(
+								st,
+								state::contended,
+								std::memory_order_relaxed,
+								std::memory_order_relaxed
+							);
+							if (success) {
+								self_->waiters_.push_back(this);
+								return false;
+							}
+						} else {
+							// mutex_ protects against concurrent transitions from state::contended.
+							assert(st == state::contended);
+							self_->waiters_.push_back(this);
+							return false;
+						}
 					}
 				}
 
@@ -85,36 +113,64 @@ namespace detail {
 		// ------------------------------------------------------------------------------
 
 		bool try_lock() {
-			frg::unique_lock lock(mutex_);
-
-			if (locked_)
-				return false;
-
-			locked_ = true;
-			return true;
+			auto st = state::none;
+			return st_.compare_exchange_strong(
+				st,
+				state::locked,
+				std::memory_order_acquire,
+				std::memory_order_relaxed
+			);
 		}
 
 		void unlock() {
+			auto st = st_.load(std::memory_order_relaxed);
+			assert(st != state::none);
+
+			// If there is no contention, we can unlock without taking mutex_.
+			if (st == state::locked) {
+				bool success = st_.compare_exchange_strong(
+					st,
+					state::none,
+					std::memory_order_release,
+					std::memory_order_relaxed
+				);
+				if (success)
+					return;
+			}
+			// Only the owner ever transitions out of state::locked so we must be in state::contended.
+			assert(st == state::contended);
+
 			node *next;
 			{
 				frg::unique_lock lock(mutex_);
-				assert(locked_);
 
-				if(waiters_.empty()) {
-					locked_ = false;
-					return;
-				}
+				// Otherwise, we would not be in state::contended.
+				assert(!waiters_.empty());
 
 				next = waiters_.pop_front();
+				if (waiters_.empty()) {
+					// Hand-off to a waiter does not require a fence.
+					st_.store(state::locked, std::memory_order_relaxed);
+				}
 			}
 
 			next->complete();
 		}
 
 	private:
+		enum class state {
+			none,
+			locked,
+			contended,
+		};
+
 		platform::mutex mutex_;
 
-		bool locked_ = false;
+		// State transitions are protected by mutex_ except for the transitions:
+		// * state::none -> state::locked
+		// * state::locked -> state::none
+		// which can happen outside of mutex_.
+		std::atomic<state> st_{state::none};
 
 		frg::intrusive_list<
 			node,
