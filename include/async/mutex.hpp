@@ -184,11 +184,19 @@ namespace detail {
 
 	struct shared_mutex {
 	private:
-		enum class state {
+		enum class contention : int {
 			none,
-			shared,
-			exclusive
+			locked,
+			contended
 		};
+
+		// Shared locks are represented by shared_cnt > 0.
+		struct alignas(8) state {
+			contention c;
+			unsigned int shared_cnt;
+		};
+		static_assert(std::atomic<state>::is_always_lock_free);
+
 
 		struct node {
 			node() = default;
@@ -204,7 +212,7 @@ namespace detail {
 			virtual void complete() = 0;
 
 			frg::default_list_hook<node> hook;
-			state desired;
+			bool exclusive;
 		};
 
 	public:
@@ -217,26 +225,53 @@ namespace detail {
 		template<typename R>
 		struct [[nodiscard]] lock_operation final : private node {
 		private:
-			using node::desired;
+			using node::exclusive;
 
 		public:
 			lock_operation(shared_mutex *self, R receiver)
 			: self_{self}, receiver_{std::move(receiver)} {
-				desired = state::exclusive;
+				exclusive = true;
 			}
 
 			bool start_inline() {
+				if (self_->try_lock()) {
+					execution::set_value_inline(receiver_);
+					return true;
+				}
+
 				{
 					frg::unique_lock lock(self_->mutex_);
 
-					if(self_->st_ != state::none) {
-						// Slow path.
-						self_->waiters_.push_back(this);
-						return false;
+					auto st = self_->st_.load(std::memory_order_relaxed);
+					while (true) {
+						if (st.c == contention::none) {
+							bool success = self_->st_.compare_exchange_weak(
+								st,
+								state{.c = contention::locked, .shared_cnt = 0},
+								std::memory_order_acquire,
+								std::memory_order_relaxed
+							);
+							if (success)
+								break;
+						} else if (st.c == contention::locked) {
+							// CAS since there can be concurrent transitions from contention::locked.
+							bool success = self_->st_.compare_exchange_weak(
+								st,
+								state{.c = contention::contended, .shared_cnt = st.shared_cnt},
+								std::memory_order_relaxed,
+								std::memory_order_relaxed
+							);
+							if (success) {
+								self_->waiters_.push_back(this);
+								return false;
+							}
+						} else {
+							// mutex_ protects against concurrent transitions from contention::contended.
+							assert(st.c == contention::contended);
+							self_->waiters_.push_back(this);
+							return false;
+						}
 					}
-
-					// Fast path.
-					self_->st_ = state::exclusive;
 				}
 
 				execution::set_value_inline(receiver_);
@@ -279,31 +314,69 @@ namespace detail {
 		template<typename R>
 		struct [[nodiscard]] lock_shared_operation final : private node {
 		private:
-			using node::desired;
+			using node::exclusive;
 
 		public:
 			lock_shared_operation(shared_mutex *self, R receiver)
 			: self_{self}, receiver_{std::move(receiver)} {
-				desired = state::shared;
+				exclusive = false;
 			}
 
 			bool start_inline() {
+				if (self_->try_lock_shared()) {
+					execution::set_value_inline(receiver_);
+					return true;
+				}
+
 				{
 					frg::unique_lock lock(self_->mutex_);
 
-					if(self_->st_ == state::none) {
-						// Fast path.
-						assert(!self_->shared_cnt_);
-						self_->st_ = state::shared;
-						self_->shared_cnt_ = 1;
-					}else if(self_->st_ == state::shared && self_->waiters_.empty()) {
-						// Fast path.
-						assert(self_->shared_cnt_);
-						++self_->shared_cnt_;
-					}else{
-						// Slow path.
-						self_->waiters_.push_back(this);
-						return false;
+					auto st = self_->st_.load(std::memory_order_relaxed);
+					while (true) {
+						if (st.c == contention::none) {
+							bool success = self_->st_.compare_exchange_weak(
+								st,
+								state{.c = contention::locked, .shared_cnt = 1},
+								std::memory_order_acquire,
+								std::memory_order_relaxed
+							);
+							if (success)
+								break;
+						} else if (st.c == contention::locked && st.shared_cnt) {
+							// CAS since there can be concurrent transitions from contention::locked.
+							bool success = self_->st_.compare_exchange_weak(
+								st,
+								state{.c = contention::locked, .shared_cnt = st.shared_cnt + 1},
+								std::memory_order_acquire,
+								std::memory_order_relaxed
+							);
+							if (success)
+								break;
+						} else {
+							if (st.c == contention::locked) {
+								assert(!st.shared_cnt);
+								// CAS since there can be concurrent transitions from contention::locked.
+								bool success = self_->st_.compare_exchange_weak(
+									st,
+									state{.c = contention::contended, .shared_cnt = 0},
+									std::memory_order_relaxed,
+									std::memory_order_relaxed
+								);
+								if (success) {
+									self_->waiters_.push_back(this);
+									return false;
+								}
+							} else {
+								// mutex_ protects against concurrent transitions from contention::contended.
+								assert(st.c == contention::contended);
+								self_->waiters_.push_back(this);
+								self_->st_.store(
+									state{.c = contention::contended, .shared_cnt = st.shared_cnt},
+									std::memory_order_relaxed
+								);
+								return false;
+							}
+						}
 					}
 				}
 
@@ -342,7 +415,63 @@ namespace detail {
 
 		// ------------------------------------------------------------------------------
 
+		bool try_lock() {
+			auto st = state{.c = contention::none, .shared_cnt = 0};
+			return st_.compare_exchange_strong(
+				st,
+				state{.c = contention::locked, .shared_cnt = 0},
+				std::memory_order_acquire,
+				std::memory_order_relaxed
+			);
+		}
+
+		bool try_lock_shared() {
+			auto st = st_.load(std::memory_order_relaxed);
+			while (true) {
+				if (st.c == contention::none) {
+					bool success = st_.compare_exchange_strong(
+						st,
+						state{.c = contention::locked, .shared_cnt = 1},
+						std::memory_order_acquire,
+						std::memory_order_relaxed
+					);
+					if (success)
+						return true;
+				} else if(st.c == contention::locked && st.shared_cnt) {
+					bool success = st_.compare_exchange_strong(
+						st,
+						state{.c = contention::locked, .shared_cnt = st.shared_cnt + 1},
+						std::memory_order_acquire,
+						std::memory_order_relaxed
+					);
+					if (success)
+						return true;
+				} else {
+					return false;
+				}
+			}
+		}
+
 		void unlock() {
+			auto st = st_.load(std::memory_order_relaxed);
+			assert(st.c != contention::none);
+			assert(!st.shared_cnt);
+
+			// If there is no contention, we can unlock without taking mutex_.
+			if (st.c == contention::locked) {
+				bool success = st_.compare_exchange_strong(
+					st,
+					state{.c = contention::none, .shared_cnt = 0},
+					std::memory_order_release,
+					std::memory_order_relaxed
+				);
+				if (success)
+					return;
+				assert(!st.shared_cnt);
+			}
+			// Only the owner ever transitions out of state::locked so we must be in state::contended.
+			assert(st.c == contention::contended);
+
 			frg::intrusive_list<
 				node,
 				frg::locate_member<
@@ -353,21 +482,36 @@ namespace detail {
 			> pending;
 			{
 				frg::unique_lock lock(mutex_);
-				assert(st_ == state::exclusive);
 
-				if(waiters_.empty()) {
-					st_ = state::none;
-					return;
-				}
+				// Otherwise, we would not be in state::contended.
+				assert(!waiters_.empty());
 
-				if(waiters_.front()->desired == state::exclusive) {
+				if(waiters_.front()->exclusive) {
 					pending.push_back(waiters_.pop_front());
+					// Hand-off to a waiter does not require a fence.
+					if (waiters_.empty()) {
+						st_.store(
+							state{.c = contention::locked, .shared_cnt = 0},
+							std::memory_order_relaxed
+						);
+					}
 				}else{
-					assert(!shared_cnt_);
-					st_ = state::shared;
-					while(!waiters_.empty() && waiters_.front()->desired == state::shared) {
+					unsigned int n = 0;
+					while(!waiters_.empty() && !waiters_.front()->exclusive) {
 						pending.push_back(waiters_.pop_front());
-						++shared_cnt_;
+						++n;
+					}
+					// Hand-off to a waiter does not require a fence.
+					if (waiters_.empty()) {
+						st_.store(
+							state{.c = contention::locked, .shared_cnt = n},
+							std::memory_order_relaxed
+						);
+					} else {
+						st_.store(
+							state{.c = contention::contended, .shared_cnt = n},
+							std::memory_order_relaxed
+						);
 					}
 				}
 			}
@@ -378,44 +522,87 @@ namespace detail {
 		}
 
 		void unlock_shared() {
-			frg::intrusive_list<
-				node,
-				frg::locate_member<
-					node,
-					frg::default_list_hook<node>,
-					&node::hook
-				>
-			> pending;
+			auto st = st_.load(std::memory_order_relaxed);
+			assert(st.c != contention::none);
+			assert(st.shared_cnt);
+
+			// If there is no contention, we can unlock without taking mutex_.
+			// In contrast to unlock(), we need to loop here.
+			while (st.c == contention::locked) {
+				if (st.shared_cnt > 1) {
+					bool success = st_.compare_exchange_weak(
+						st,
+						state{.c = contention::locked, .shared_cnt = st.shared_cnt - 1},
+						std::memory_order_release,
+						std::memory_order_relaxed
+					);
+					if (success)
+						return;
+				} else {
+					assert(st.shared_cnt == 1);
+					bool success = st_.compare_exchange_weak(
+						st,
+						state{.c = contention::none, .shared_cnt = 0},
+						std::memory_order_release,
+						std::memory_order_relaxed
+					);
+					if (success)
+						return;
+				}
+				assert(st.c != contention::none);
+				assert(st.shared_cnt);
+			}
+			// Only the owner ever transitions out of state::locked so we must be in state::contended.
+			assert(st.c == contention::contended);
+
+			node *next;
 			{
 				frg::unique_lock lock(mutex_);
-				assert(st_ == state::shared);
-				assert(shared_cnt_);
 
-				--shared_cnt_;
-				if(shared_cnt_)
-					return;
-
-				if(waiters_.empty()) {
-					st_ = state::none;
+				// In contrast to unlock(), contended shared -> shared transitions do not wake.
+				if (st.shared_cnt > 1) {
+					st_.store(
+						state{.c = contention::contended, .shared_cnt = st.shared_cnt - 1},
+						std::memory_order_release
+					);
 					return;
 				}
+				assert(st.shared_cnt == 1);
 
-				assert(waiters_.front()->desired == state::exclusive);
-				st_ = state::exclusive;
-				pending.push_back(waiters_.pop_front());
+				// Otherwise, we would not be in state::contended.
+				assert(!waiters_.empty());
+
+				// Otherwise, the node would not be waiting (but sharing the lock).
+				assert(waiters_.front()->exclusive);
+
+				next = waiters_.pop_front();
+				if (waiters_.empty()) {
+					// Hand-off to a waiter does not require a fence.
+					st_.store(
+						state{.c = contention::locked, .shared_cnt = 0},
+						std::memory_order_relaxed
+					);
+				} else {
+					// Hand-off to a waiter does not require a fence.
+					st_.store(
+						state{.c = contention::contended, .shared_cnt = 0},
+						std::memory_order_relaxed
+					);
+				}
 			}
-			assert(!pending.empty());
 
-			while(!pending.empty())
-				pending.pop_front()->complete();
+			next->complete();
 		}
 
 	private:
 		platform::mutex mutex_;
 
-		state st_ = state::none;
-
-		unsigned int shared_cnt_ = 0;
+		// State transitions are protected by mutex_ except for the transitions:
+		// * state::none -> state::locked
+		// * state::locked -> state::locked (with different shared_cnt).
+		// * state::locked -> state::none
+		// which can happen outside of mutex_.
+		std::atomic<state> st_{state{.c = contention::none, .shared_cnt = 0}};
 
 		frg::intrusive_list<
 			node,
