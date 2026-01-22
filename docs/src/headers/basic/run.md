@@ -7,13 +7,13 @@ via the IO service.
 ## Prototype
 
 ```cpp
-template<typename IoService>
+template<Waitable IoService>
 void run_forever(IoService ios); // (1) 
 
 template<typename Sender>
 Sender::value_type run(Sender s); // (2)
 
-template<typename Sender, typename IoService>
+template<typename Sender, Waitable IoService>
 Sender::value_type run(Sender s, IoService ios); // (3)
 ```
 
@@ -24,11 +24,13 @@ inline as there's no way to wait for it to complete.
 
 ### Requirements
 
-`IoService` is an [IO service](../../io-service.md), and `Sender` is a sender.
+`IoService` is an [IO service](../../io-service.md), and must be a
+[Waitable](./waitable.md), and `Sender` is a sender.
 
 ### Arguments
 
- - `IoService` - the IO service to use to wait for completion.
+ - `IoService` - the IO service to use to wait for completion. Must fulfill the
+   [Waitable](./waitable.md) concept.
  - `Sender` - the sender to start.
 
 ### Return value

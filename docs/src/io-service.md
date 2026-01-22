@@ -7,6 +7,8 @@ The IO service must provide one method: `void wait()`. This method is called whe
 there is no more work to do currently. It waits for any event to happen, and wakes
 up the appropriate coroutine/operation which awaited the event.
 
+See also: the [Waitable](/headers/basic/waitable.md) concept.
+
 **Note:** `async::run` and `async::run_forever` (see [here](headers/basic/run.md#prototype))
 take the IO service by value, not by reference.
 

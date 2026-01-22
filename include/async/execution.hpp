@@ -2,154 +2,125 @@
 
 #include <type_traits>
 #include <utility>
+#include <concepts>
+
+#include <frg/detection.hpp>
 
 namespace async {
-
-// Detection pattern boilerplate.
-
-template<typename... Ts>
-using void_t = void;
-
-template<typename... Ts>
-constexpr bool dependent_false_t = false;
-
-template <template <typename...> typename Trait, typename Void, typename... Args>
-struct is_detected_helper : std::false_type { };
-
-template <template <typename...> typename Trait, typename... Args>
-struct is_detected_helper<Trait, void_t<Trait<Args...>>, Args...> : std::true_type { };
-
-template <template <typename...> typename Trait, typename... Args>
-constexpr bool is_detected_v = is_detected_helper<Trait, void, Args...>::value;
-
 namespace cpo_types {
-	// TODO: Rewrite this using concepts.
-	template<typename S, typename R>
-	using connect_member_t = decltype(std::declval<S>().connect(std::declval<R>()));
+template<typename Sender, typename Receiver>
+concept member_connect =  requires (Sender &&s, Receiver &&r) {
+	std::forward<Sender>(s).connect(std::forward<Receiver>(r));
+};
 
-	template<typename S, typename R>
-	constexpr bool has_connect_member_v = is_detected_v<connect_member_t, S, R>;
+template<typename Sender, typename Receiver>
+concept global_connect = requires (Sender &&s, Receiver &&r) {
+	connect(std::forward<Sender>(s), std::forward<Receiver>(r));
+};
 
-	template<typename S, typename R>
-	using global_connect_t = decltype(connect(std::declval<S>(), std::declval<R>()));
-
-	template<typename S, typename R>
-	constexpr bool has_global_connect_v = is_detected_v<global_connect_t, S, R>;
-
-	struct connect_cpo {
-		template<typename Sender, typename Receiver>
-		auto operator() (Sender &&s, Receiver &&r) const {
-			if constexpr (has_connect_member_v<Sender, Receiver>)
-					return s.connect(r);
-			else if constexpr (has_global_connect_v<Sender, Receiver>)
-					return connect(std::forward<Sender>(s), std::forward<Receiver>(r));
-				else
-					static_assert(dependent_false_t<Sender, Receiver>,
-							"No connect() customization defined for sender type");
+struct connect_cpo {
+	template<typename Sender, typename Receiver>
+	auto operator() (Sender &&s, Receiver &&r) const {
+		if constexpr (member_connect<Sender, Receiver>) {
+			return std::forward<Sender>(s).connect(std::forward<Receiver>(r));
+		} else if constexpr (global_connect<Sender, Receiver>) {
+			return connect(
+				std::forward<Sender>(s),
+				std::forward<Receiver>(r)
+			);
+		} else {
+			static_assert(frg::dependent_false_t<Sender, Receiver>,
+				"No connect() customization defined for S,R");
 		}
-	};
+	}
+};
 
-	template<typename Op>
-	using start_member_t = decltype(std::declval<Op>().start());
+template<typename Operation>
+concept inline_startable_operation = requires (Operation &&op) {
+	{ std::forward<Operation>(op).start_inline() } -> std::convertible_to<bool>;
+};
 
-	template<typename Op>
-	constexpr bool has_start_member_v = is_detected_v<start_member_t, Op>;
+template<typename Operation>
+concept member_start = requires (Operation &&op) {
+	std::forward<Operation>(op).start();
+};
 
-	template<typename Op>
-	using global_start_t = decltype(start(std::declval<Op>()));
+template<typename Operation>
+concept global_start = requires (Operation &&op) {
+	start(std::forward<Operation>(op));
+};
 
-	template<typename Op>
-	constexpr bool has_global_start_v = is_detected_v<global_start_t, Op>;
-
-	struct start_inline_cpo {
-		template<typename Operation>
-		bool operator() (Operation &&op) const {
-			if constexpr (requires { op.start_inline(); }) {
-				return op.start_inline();
-			}else if constexpr (has_start_member_v<Operation>) {
-				op.start();
-				return false;
-			}else if constexpr (has_global_start_v<Operation>) {
-				start(std::forward<Operation>(op));
-				return false;
-			}else{
-				static_assert(dependent_false_t<Operation>,
-						"No start() customization defined for operation type");
-			}
+struct start_inline_cpo {
+	template<typename Operation>
+	bool operator() (Operation &&op) const {
+		if constexpr (inline_startable_operation<Operation>) {
+			return op.start_inline();
+		}else if constexpr (member_start<Operation>) {
+			std::forward<Operation>(op).start();
+			return false;
+		}else if constexpr (global_start<Operation>) {
+			start(std::forward<Operation>(op));
+			return false;
+		}else{
+			static_assert(frg::dependent_false_t<Operation>,
+				"No start() customization defined for operation type");
 		}
-	};
+	}
+};
 
-	struct set_value_cpo {
-		template<typename Receiver, typename T>
-		requires
-			requires(Receiver &&r, T &&value) { r.set_value_noinline(std::forward<T>(value)); }
-		void operator() (Receiver &&r, T &&value) {
-			if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
-				r.set_value_noinline(std::forward<T>(value));
-			else
-				// This should have been caught by the concept.
-				static_assert(dependent_false_t<Receiver>);
-		}
+struct set_value_cpo {
+	template<typename Receiver, typename T>
+	requires requires(Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
+	}
+	void operator() (Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
+	}
 
-		template<typename Receiver>
-		requires
-			requires(Receiver &&r) { r.set_value_noinline(); }
-		void operator() (Receiver &&r) {
-			if constexpr (requires { r.set_value_noinline(); })
-				r.set_value_noinline();
-			else
-				// This should have been caught by the concept.
-				static_assert(dependent_false_t<Receiver>);
-		}
-	};
+	template<typename Receiver>
+	requires requires(Receiver &&r) {
+		std::forward<Receiver>(r).set_value_noinline();
+	}
+	void operator() (Receiver &&r) {
+		std::forward<Receiver>(r).set_value_noinline();
+	}
+};
 
-	struct set_value_inline_cpo {
-		template<typename Receiver, typename T>
-		requires
-			requires(Receiver &&r, T &&value) { r.set_value_inline(std::forward<T>(value)); }
-		void operator() (Receiver &&r, T &&value) {
-			if constexpr (requires { r.set_value_inline(std::forward<T>(value)); })
-				r.set_value_inline(std::forward<T>(value));
-			else
-				// This should have been caught by the concept.
-				static_assert(dependent_false_t<Receiver>);
-		}
+struct set_value_inline_cpo {
+	template<typename Receiver, typename T>
+	requires requires(Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value_inline(std::forward<T>(value));
+	}
+	void operator() (Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value_inline(std::forward<T>(value));
+	}
 
-		template<typename Receiver>
-		requires
-			requires(Receiver &&r) { r.set_value_inline(); }
-		void operator() (Receiver &&r) {
-			if constexpr (requires { r.set_value_inline(); })
-				r.set_value_inline();
-			else
-				// This should have been caught by the concept.
-				static_assert(dependent_false_t<Receiver>);
-		}
-	};
+	template<typename Receiver>
+	requires requires(Receiver &&r) {
+		std::forward<Receiver>(r).set_value_inline();
+	}
+	void operator() (Receiver &&r) {
+		std::forward<Receiver>(r).set_value_inline();
+	}
+};
 
-	struct set_value_noinline_cpo {
-		template<typename Receiver, typename T>
-		requires
-			requires(Receiver &&r, T &&value) { r.set_value_noinline(std::forward<T>(value)); }
-		void operator() (Receiver &&r, T &&value) {
-			if constexpr (requires { r.set_value_noinline(std::forward<T>(value)); })
-				r.set_value_noinline(std::forward<T>(value));
-			else
-				// This should have been caught by the concept.
-				static_assert(dependent_false_t<Receiver>);
-		}
+struct set_value_noinline_cpo {
+	template<typename Receiver, typename T>
+	requires requires(Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
+	}
+	void operator() (Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
+	}
 
-		template<typename Receiver>
-		requires
-			requires(Receiver &&r) { r.set_value_noinline(); }
-		void operator() (Receiver &&r) {
-			if constexpr (requires { r.set_value_noinline(); })
-				r.set_value_noinline();
-			else
-				// This should have been caught by the concept.
-				static_assert(dependent_false_t<Receiver>);
-		}
-	};
+	template<typename Receiver>
+	requires requires(Receiver &&r) {
+		std::forward<Receiver>(r).set_value_noinline();
+	}
+	void operator() (Receiver &&r) {
+		std::forward<Receiver>(r).set_value_noinline();
+	}
+};
 }
 
 namespace execution {
