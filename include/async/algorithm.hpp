@@ -694,7 +694,7 @@ private:
 	frg::aligned_storage<max_operation_size, max_operation_alignment> box_;
 };
 
-template <typename ...Senders> requires (sizeof...(Senders) > 0)
+template <Sender ...Senders> requires (sizeof...(Senders) > 0)
 struct [[nodiscard]] sequence_sender {
 	using value_type = typename std::tuple_element_t<sizeof...(Senders) - 1, frg::tuple<Senders...>>::value_type;
 
@@ -707,7 +707,7 @@ struct [[nodiscard]] sequence_sender {
 	frg::tuple<Senders...> senders;
 };
 
-template <typename ...Senders> requires (sizeof...(Senders) > 0)
+template <Sender ...Senders> requires (sizeof...(Senders) > 0)
 sequence_sender<Senders...> sequence(Senders ...senders) {
 	return {frg::tuple<Senders...>{std::move(senders)...}};
 }

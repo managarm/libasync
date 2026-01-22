@@ -75,7 +75,7 @@ static_assert(Receives<dummy_receiver<[]{}>, int>);
 } /* namespace helpers */
 
 template<typename T>
-concept Operation = !std::movable<T> && requires(T &t) {
+concept Operation = requires(T &t) {
 	{ execution::start_inline(t) } -> std::same_as<bool>;
 };
 
