@@ -52,7 +52,7 @@ protected:
 // On past_start -> past_suspend transitions, we call resume().
 enum class coroutine_cfp {
 	indeterminate,
-	past_start, // We are past start_inline().
+	past_start, // We are past start().
 	past_suspend // We are past final_suspend.
 };
 
@@ -289,7 +289,7 @@ struct result_operation final : private result_continuation<T> {
 
 	result_operation &operator= (const result_operation &) = delete;
 
-	bool start_inline() {
+	void start() {
 		auto h = s_.h_;
 		auto promise = &h.promise();
 		promise->cont_ = this;
@@ -298,10 +298,8 @@ struct result_operation final : private result_continuation<T> {
 		if(cfp == coroutine_cfp::past_suspend) {
 			// Synchronize with the thread that complete the coroutine.
 			std::atomic_thread_fence(std::memory_order_acquire);
-			async::execution::set_value_inline(receiver_, std::move(value()));
-			return true;
+			return async::execution::set_value(receiver_, std::move(value()));
 		}
-		return false;
 	}
 
 private:
@@ -326,7 +324,7 @@ struct result_operation<void, R> final : private result_continuation<void> {
 
 	result_operation &operator= (const result_operation &) = delete;
 
-	bool start_inline() {
+	void start() {
 		auto h = s_.h_;
 		auto promise = &h.promise();
 		promise->cont_ = this;
@@ -335,10 +333,8 @@ struct result_operation<void, R> final : private result_continuation<void> {
 		if(cfp == coroutine_cfp::past_suspend) {
 			// Synchronize with the thread that complete the coroutine.
 			std::atomic_thread_fence(std::memory_order_acquire);
-			async::execution::set_value_inline(receiver_);
-			return true;
+			return async::execution::set_value(receiver_);
 		}
-		return false;
 	}
 
 private:

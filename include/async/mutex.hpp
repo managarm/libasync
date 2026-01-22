@@ -35,12 +35,10 @@ namespace detail {
 			lock_operation(mutex *self, R receiver)
 			: self_{self}, receiver_{std::move(receiver)} { }
 
-			bool start_inline() {
+			void start() {
 				// Avoid taking mutex_ if possible.
-				if (self_->try_lock()) {
-					execution::set_value_inline(receiver_);
-					return true;
-				}
+				if (self_->try_lock())
+					return execution::set_value(receiver_);
 
 				{
 					frg::unique_lock lock(self_->mutex_);
@@ -66,19 +64,18 @@ namespace detail {
 							);
 							if (success) {
 								self_->waiters_.push_back(this);
-								return false;
+								return;
 							}
 						} else {
 							// mutex_ protects against concurrent transitions from state::contended.
 							assert(st == state::contended);
 							self_->waiters_.push_back(this);
-							return false;
+							return;
 						}
 					}
 				}
 
-				execution::set_value_inline(receiver_);
-				return true;
+				return execution::set_value(receiver_);
 			}
 
 		private:
@@ -233,11 +230,9 @@ namespace detail {
 				exclusive = true;
 			}
 
-			bool start_inline() {
-				if (self_->try_lock()) {
-					execution::set_value_inline(receiver_);
-					return true;
-				}
+			void start() {
+				if (self_->try_lock())
+					return execution::set_value(receiver_);
 
 				{
 					frg::unique_lock lock(self_->mutex_);
@@ -263,19 +258,18 @@ namespace detail {
 							);
 							if (success) {
 								self_->waiters_.push_back(this);
-								return false;
+								return;
 							}
 						} else {
 							// mutex_ protects against concurrent transitions from contention::contended.
 							assert(st.c == contention::contended);
 							self_->waiters_.push_back(this);
-							return false;
+							return;
 						}
 					}
 				}
 
-				execution::set_value_inline(receiver_);
-				return true;
+				return execution::set_value(receiver_);
 			}
 
 		private:
@@ -322,11 +316,9 @@ namespace detail {
 				exclusive = false;
 			}
 
-			bool start_inline() {
-				if (self_->try_lock_shared()) {
-					execution::set_value_inline(receiver_);
-					return true;
-				}
+			void start() {
+				if (self_->try_lock_shared())
+					return execution::set_value(receiver_);
 
 				{
 					frg::unique_lock lock(self_->mutex_);
@@ -364,7 +356,7 @@ namespace detail {
 								);
 								if (success) {
 									self_->waiters_.push_back(this);
-									return false;
+									return;
 								}
 							} else {
 								// mutex_ protects against concurrent transitions from contention::contended.
@@ -374,14 +366,13 @@ namespace detail {
 									state{.c = contention::contended, .shared_cnt = st.shared_cnt},
 									std::memory_order_relaxed
 								);
-								return false;
+								return;
 							}
 						}
 					}
 				}
 
-				execution::set_value_inline(receiver_);
-				return true;
+				return execution::set_value(receiver_);
 			}
 
 		private:

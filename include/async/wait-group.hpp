@@ -84,7 +84,7 @@ public:
 		wait_operation(wait_group *wg, cancellation_token ct, Receiver r)
 		: wg_{wg}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
 
-		bool start_inline() {
+		void start() {
 			bool cancelled = false;
 			{
 				frg::unique_lock lock(wg_->mutex_);
@@ -94,13 +94,12 @@ public:
 						cancelled = true;
 					}else{
 						wg_->queue_.push_back(this);
-						return false;
+						return;
 					}
 				}
 			}
 
-			execution::set_value_inline(r_, !cancelled);
-			return true;
+			return execution::set_value(r_, !cancelled);
 		}
 
 	private:

@@ -62,7 +62,7 @@ public:
 			node::object = std::move(object);
 		}
 
-		bool start_inline() {
+		void start() {
 			auto fast_path = [&] {
 				frg::intrusive_list<
 					poll_node,
@@ -101,11 +101,8 @@ public:
 				return false;
 			}(); // Immediately invoked.
 
-			if(fast_path) {
-				execution::set_value_inline(receiver_);
-				return true;
-			}
-			return false;
+			if(fast_path)
+				return execution::set_value(receiver_);
 		}
 
 	private:

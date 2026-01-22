@@ -40,14 +40,13 @@ struct [[nodiscard]] invocable_operation {
 
 	invocable_operation &operator= (const invocable_operation &) = delete;
 
-	bool start_inline() {
+	void start() {
 		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
 			f_();
-			execution::set_value_inline(r_);
+			return execution::set_value(r_);
 		}else{
-			execution::set_value_inline(r_, f_());
+			return execution::set_value(r_, f_());
 		}
-		return true;
 	}
 
 private:
@@ -270,13 +269,9 @@ struct [[nodiscard]] repeat_while_operation {
 
 	repeat_while_operation &operator=(const repeat_while_operation &) = delete;
 
-	bool start_inline() {
-		if(loop_()) {
-			execution::set_value_inline(dr_);
-			return true;
-		}
-
-		return false;
+	void start() {
+		if(loop_())
+			return execution::set_value(dr_);
 	}
 
 private:
@@ -418,7 +413,7 @@ public:
 	race_and_cancel_operation(race_and_cancel_sender<Functors...> s, Receiver r)
 	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_sync_{0}, n_done_{0} { }
 
-	bool start_inline() {
+	void start() {
 		unsigned int n_sync = 0;
 
 		((execution::start_inline(ops_.template get<Is>())
@@ -432,13 +427,9 @@ public:
 					cs_[j].cancel();
 			}
 
-			if ((n + n_sync) == sizeof...(Is)) {
-				execution::set_value_inline(r_);
-				return true;
-			}
+			if ((n + n_sync) == sizeof...(Is))
+				return execution::set_value(r_);
 		}
-
-		return false;
 	}
 
 private:
@@ -760,7 +751,7 @@ public:
 		ops_{make_operations_tuple(std::index_sequence_for<Senders...>{}, std::move(senders))},
 		ctr_{sizeof...(Senders)} { }
 
-	bool start_inline() {
+	void start() {
 		int n_fast = 0;
 		[&]<size_t... Is> (std::index_sequence<Is...>) {
 			([&] <size_t I> () {
@@ -771,11 +762,8 @@ public:
 
 		auto c = ctr_.fetch_sub(n_fast, std::memory_order_acq_rel);
 		assert(c > 0);
-		if(c == n_fast) {
-			execution::set_value_inline(dr_);
-			return true;
-		}
-		return false;
+		if(c == n_fast)
+			return execution::set_value(dr_);
 	}
 
 	Receiver dr_; // Downstream receiver.
