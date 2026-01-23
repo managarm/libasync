@@ -91,7 +91,7 @@ public:
 	private:
 		static void complete(node *base) {
 			auto self = static_cast<wait_operation *>(base);
-			execution::set_value_noinline(self->r_);
+			execution::set_value(self->r_);
 		}
 
 		oneshot_primitive *evt_;

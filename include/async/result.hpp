@@ -304,7 +304,7 @@ struct result_operation final : private result_continuation<T> {
 
 private:
 	void resume() override {
-		async::execution::set_value_noinline(receiver_, std::move(value()));
+		async::execution::set_value(receiver_, std::move(value()));
 	}
 
 private:
@@ -339,7 +339,7 @@ struct result_operation<void, R> final : private result_continuation<void> {
 
 private:
 	void resume() override {
-		async::execution::set_value_noinline(receiver_);
+		async::execution::set_value(receiver_);
 	}
 
 private:

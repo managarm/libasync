@@ -98,9 +98,9 @@ struct value_transform_receiver {
 	void set_value_noinline(X value) {
 		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
 			f_(std::move(value));
-			execution::set_value_noinline(dr_);
+			execution::set_value(dr_);
 		}else{
-			execution::set_value_noinline(dr_, f_(std::move(value)));
+			execution::set_value(dr_, f_(std::move(value)));
 		}
 	}
 
@@ -126,9 +126,9 @@ struct void_transform_receiver {
 	void set_value_noinline() {
 		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
 			f_();
-			execution::set_value_noinline(dr_);
+			execution::set_value(dr_);
 		}else{
-			execution::set_value_noinline(dr_, f_());
+			execution::set_value(dr_, f_());
 		}
 	}
 
@@ -301,7 +301,7 @@ private:
 			auto s = self_; // box_.destruct() will destruct this.
 			s->box_.destruct();
 			if(s->loop_())
-				execution::set_value_noinline(s->dr_);
+				execution::set_value(s->dr_);
 		}
 
 	private:
@@ -382,7 +382,7 @@ private:
 						self_->cs_[j].cancel();
 			}
 			if(n + 1 == sizeof...(Is))
-				execution::set_value_noinline(self_->r_);
+				execution::set_value(self_->r_);
 		}
 
 	private:
@@ -617,7 +617,7 @@ private:
 			if(InlinePath) {
 				execution::set_value_inline(s->dr_);
 			}else{
-				execution::set_value_noinline(s->dr_);
+				execution::set_value(s->dr_);
 			}
 		}
 
@@ -630,7 +630,7 @@ private:
 			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
 			op->~operation_type();
 
-			execution::set_value_noinline(s->dr_);
+			execution::set_value(s->dr_);
 		}
 
 		template <typename T>
@@ -647,7 +647,7 @@ private:
 			if(InlinePath) {
 				execution::set_value_inline(s->dr_, std::move(value));
 			}else{
-				execution::set_value_noinline(s->dr_, std::move(value));
+				execution::set_value(s->dr_, std::move(value));
 			}
 		}
 
@@ -662,7 +662,7 @@ private:
 			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
 			op->~operation_type();
 
-			execution::set_value_noinline(s->dr_, std::move(value));
+			execution::set_value(s->dr_, std::move(value));
 		}
 
 	private:
@@ -728,7 +728,7 @@ private:
 			auto c = self_->ctr_.fetch_sub(1, std::memory_order_acq_rel);
 			assert(c > 0);
 			if(c == 1)
-				execution::set_value_noinline(self_->dr_);
+				execution::set_value(self_->dr_);
 		}
 
 	private:

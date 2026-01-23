@@ -80,7 +80,7 @@ namespace detail {
 
 		private:
 			void complete() override {
-				execution::set_value_noinline(receiver_);
+				execution::set_value(receiver_);
 			}
 
 			mutex *self_;
@@ -274,7 +274,7 @@ namespace detail {
 
 		private:
 			void complete() override {
-				execution::set_value_noinline(receiver_);
+				execution::set_value(receiver_);
 			}
 
 			shared_mutex *self_;
@@ -377,7 +377,7 @@ namespace detail {
 
 		private:
 			void complete() override {
-				execution::set_value_noinline(receiver_);
+				execution::set_value(receiver_);
 			}
 
 			shared_mutex *self_;

@@ -274,21 +274,21 @@ public:
 			}
 
 			if constexpr (std::is_same_v<T, void>)
-				execution::set_value_noinline(r_, !cancelled);
+				execution::set_value(r_, !cancelled);
 			else {
 				if (cancelled)
-					execution::set_value_noinline(r_, frg::optional<T *>{frg::null_opt});
+					execution::set_value(r_, frg::optional<T *>{frg::null_opt});
 				else
-					execution::set_value_noinline(r_, frg::optional<T *>{&state_->get()});
+					execution::set_value(r_, frg::optional<T *>{&state_->get()});
 			}
 		}
 
 		void complete() override {
 			if (cobs_.try_reset()) {
 				if constexpr (std::is_same_v<T, void>)
-					execution::set_value_noinline(r_, true);
+					execution::set_value(r_, true);
 				else
-					execution::set_value_noinline(r_, frg::optional<T *>{&state_->get()});
+					execution::set_value(r_, frg::optional<T *>{&state_->get()});
 			}
 		}
 

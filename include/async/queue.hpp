@@ -105,11 +105,11 @@ public:
 				}
 			}
 
-			execution::set_value_noinline(r_, std::move(value));
+			execution::set_value(r_, std::move(value));
 		}
 
 		void complete() override {
-			execution::set_value_noinline(r_, std::move(value));
+			execution::set_value(r_, std::move(value));
 		}
 
 		queue *q_;

@@ -115,12 +115,12 @@ public:
 				}
 			}
 
-			execution::set_value_noinline(r_, !cancelled);
+			execution::set_value(r_, !cancelled);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset())
-				execution::set_value_noinline(r_, true);
+				execution::set_value(r_, true);
 		}
 
 		wait_group *wg_;
@@ -203,7 +203,7 @@ struct [[nodiscard]] sender_ {
 			requires(sizeof...(Ts) <= 1)
 			void set_value_noinline(Ts &&...ts) {
 				op_.wg_.done();
-				execution::set_value_noinline(
+				execution::set_value(
 					op_.originalr_,
 					std::forward<Ts>(ts)...
 				);

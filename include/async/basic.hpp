@@ -220,7 +220,7 @@ struct any_receiver {
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p, T value) {
 			auto *rp = static_cast<R *>(p);
-			execution::set_value_noinline(*rp, std::move(value));
+			execution::set_value(*rp, std::move(value));
 		};
 	}
 
@@ -249,7 +249,7 @@ struct any_receiver<void> {
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p) {
 			auto *rp = static_cast<R *>(p);
-			execution::set_value_noinline(*rp);
+			execution::set_value(*rp);
 		};
 	}
 

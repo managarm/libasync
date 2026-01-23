@@ -124,13 +124,13 @@ public:
 			}
 
 			st_ = state::retired;
-			execution::set_value_noinline(r_, maybe_cancelled::cancelled);
+			execution::set_value(r_, maybe_cancelled::cancelled);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset()) {
 				st_ = state::retired;
-				execution::set_value_noinline(r_, maybe_awaited::awaited);
+				execution::set_value(r_, maybe_awaited::awaited);
 			}
 		}
 

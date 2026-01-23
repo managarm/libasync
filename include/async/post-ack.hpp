@@ -107,7 +107,7 @@ public:
 
 	private:
 		void complete() override {
-			execution::set_value_noinline(receiver_);
+			execution::set_value(receiver_);
 		}
 
 		post_ack_mechanism *mech_;
