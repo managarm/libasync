@@ -218,9 +218,9 @@ struct [[nodiscard]] sender_ {
 			, originalop_(execution::connect(std::move(s.originals_), receiver_{*this}))
 		{}
 
-		bool start_inline() {
+		void start() {
 			wg_.add(1);
-			return execution::start_inline(originalop_);
+			return execution::start(originalop_);
 		}
 
 		operation_(const operation_&) = delete;

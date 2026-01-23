@@ -204,17 +204,17 @@ struct [[nodiscard]] ite_operation {
 			else_op_.destruct();
 		}
 
-	bool start_inline() {
+	void start() {
 		if(cond_()) {
 			then_op_.construct_with([&] {
 				return execution::connect(std::move(then_s_), std::move(dr_));
 			});
-			return execution::start_inline(*then_op_);
+			return execution::start(*then_op_);
 		}else{
 			else_op_.construct_with([&] {
 				return execution::connect(std::move(else_s_), std::move(dr_));
 			});
-			return execution::start_inline(*else_op_);
+			return execution::start(*else_op_);
 		}
 	}
 
@@ -473,10 +473,10 @@ struct let_operation {
 	}
 
 public:
-	bool start_inline() {
+	void start() {
 		imm_ = std::move(pred_());
 		op_.construct_with([&]{ return execution::connect(func_(imm_), std::move(r_)); });
-		return execution::start_inline(*op_);
+		return execution::start(*op_);
 	}
 
 private:
@@ -529,7 +529,7 @@ struct [[nodiscard]] sequence_operation {
 
 	sequence_operation &operator=(const sequence_operation &) = delete;
 
-	bool start_inline() {
+	void start() {
 		return do_step<0, true>();
 	}
 
@@ -539,7 +539,7 @@ private:
 
 	template <size_t Index, bool InlinePath>
 	requires (InlinePath)
-	bool do_step() {
+	void do_step() {
 		using operation_type = execution::operation_t<nth_sender<Index>,
 				receiver<Index, true>>;
 
@@ -550,12 +550,11 @@ private:
 
 		if(execution::start_inline(*op)) {
 			if constexpr (Index == sizeof...(Senders) - 1) {
-				return true;
+				return;
 			}else{
 				return do_step<Index + 1, true>();
 			}
 		}
-		return false;
 	}
 
 	// Same as above but since we are not on the InlinePath, we do not care about the return value.
@@ -805,8 +804,8 @@ struct lambda_operation {
 	lambda_operation(R receiver, Fn fn, std::tuple<Args...> args)
 	: fn_{std::move(fn)}, op_{execution::connect(std::apply(fn_, args), std::move(receiver))} { }
 
-	bool start_inline() {
-		return execution::start_inline(op_);
+	void start() {
+		return execution::start(op_);
 	}
 
 	Fn fn_;

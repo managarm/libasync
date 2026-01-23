@@ -36,11 +36,6 @@ struct connect_cpo {
 };
 
 template<typename Operation>
-concept inline_startable_operation = requires (Operation &&op) {
-	{ std::forward<Operation>(op).start_inline() } -> std::convertible_to<bool>;
-};
-
-template<typename Operation>
 concept member_start = requires (Operation &&op) {
 	std::forward<Operation>(op).start();
 };
@@ -50,12 +45,24 @@ concept global_start = requires (Operation &&op) {
 	start(std::forward<Operation>(op));
 };
 
+struct start_cpo {
+	template<typename Operation>
+	void operator() (Operation &&op) const {
+		if constexpr (member_start<Operation>) {
+			std::forward<Operation>(op).start();
+		}else if constexpr (global_start<Operation>) {
+			start(std::forward<Operation>(op));
+		}else{
+			static_assert(frg::dependent_false_t<Operation>,
+				"No start() customization defined for operation type");
+		}
+	}
+};
+
 struct start_inline_cpo {
 	template<typename Operation>
 	bool operator() (Operation &&op) const {
-		if constexpr (inline_startable_operation<Operation>) {
-			return op.start_inline();
-		}else if constexpr (member_start<Operation>) {
+		if constexpr (member_start<Operation>) {
 			std::forward<Operation>(op).start();
 			return false;
 		}else if constexpr (global_start<Operation>) {
@@ -128,6 +135,7 @@ namespace execution {
 	using operation_t = std::invoke_result_t<cpo_types::connect_cpo, S, R>;
 
 	inline cpo_types::connect_cpo connect;
+	inline cpo_types::start_cpo start;
 	inline cpo_types::start_inline_cpo start_inline;
 	inline cpo_types::set_value_cpo set_value;
 	inline cpo_types::set_value_inline_cpo set_value_inline;
