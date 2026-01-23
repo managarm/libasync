@@ -41,26 +41,15 @@ template<typename T, typename Value>
 concept Receives = std::movable<T>
 && (std::same_as<Value, void> ?
 requires(T t) {
-	{ t.set_value_inline() } -> std::same_as<void>;
 	{ t.set_value_noinline() } -> std::same_as<void>;
 }
 : requires(T t) {
-	{ t.set_value_inline(std::declval<Value>()) } -> std::same_as<void>;
 	{ t.set_value_noinline(std::declval<Value>()) } -> std::same_as<void>;
 });
 
 namespace helpers {
 template<auto>
 struct dummy_receiver {
-	template<typename T>
-	requires (!std::same_as<T, void>)
-	void set_value_inline(T) {
-		assert(std::is_constant_evaluated());
-	}
-	void set_value_inline() {
-		assert(std::is_constant_evaluated());
-	}
-
 	template<typename T>
 	requires (!std::same_as<T, void>)
 	void set_value_noinline(T) {
@@ -127,10 +116,6 @@ template<typename S, typename T = void>
 struct [[nodiscard]] sender_awaiter {
 private:
 	struct receiver {
-		void set_value_inline(T result) {
-			p_->result_.emplace(std::move(result));
-		}
-
 		void set_value_noinline(T result) {
 			p_->result_.emplace(std::move(result));
 			p_->h_.resume();
@@ -167,10 +152,6 @@ template<typename S>
 struct [[nodiscard]] sender_awaiter<S, void> {
 private:
 	struct receiver {
-		void set_value_inline() {
-			// Do nothing.
-		}
-
 		void set_value_noinline() {
 			p_->h_.resume();
 		}
@@ -394,8 +375,6 @@ template<Sender Sender>
 requires std::same_as<typename Sender::value_type, void>
 void run(Sender s) {
 	struct receiver {
-		void set_value_inline() { }
-
 		void set_value_noinline() { }
 	};
 
@@ -416,10 +395,6 @@ typename Sender::value_type run(Sender s) {
 	struct receiver {
 		receiver(state *stp)
 		: stp_{stp} { }
-
-		void set_value_inline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-		}
 
 		void set_value_noinline(typename Sender::value_type value) {
 			stp_->value.emplace(std::move(value));
@@ -448,10 +423,6 @@ void run(Sender s, IoService ios) {
 	struct receiver {
 		receiver(state *stp)
 		: stp_{stp} { }
-
-		void set_value_inline() {
-			stp_->done = true;
-		}
 
 		void set_value_noinline() {
 			stp_->done = true;
@@ -483,11 +454,6 @@ typename Sender::value_type run(Sender s, IoService ios) {
 	struct receiver {
 		receiver(state *stp)
 		: stp_{stp} { }
-
-		void set_value_inline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-			stp_->done = true;
-		}
 
 		void set_value_noinline(typename Sender::value_type value) {
 			stp_->value.emplace(std::move(value));
@@ -550,10 +516,6 @@ namespace detach_details_ {
 	struct final_receiver {
 		final_receiver(control_block<Allocator, S, Cont> *cb)
 		: cb_{cb} { }
-
-		void set_value_inline() {
-			finalize(cb_);
-		}
 
 		void set_value_noinline() {
 			finalize(cb_);
@@ -619,12 +581,6 @@ namespace spawn_details_ {
 	struct final_receiver {
 		final_receiver(control_block<Allocator, S, R> *cb)
 		: cb_{cb} { }
-
-		template<typename... Args>
-		void set_value_inline(Args &&... args) {
-			cb_->dr.set_value_inline(std::forward<Args>(args)...);
-			finalize(cb_);
-		}
 
 		template<typename... Args>
 		void set_value_noinline(Args &&... args) {

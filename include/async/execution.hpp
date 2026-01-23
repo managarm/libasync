@@ -8,6 +8,7 @@
 
 namespace async {
 namespace cpo_types {
+
 template<typename Sender, typename Receiver>
 concept member_connect =  requires (Sender &&s, Receiver &&r) {
 	std::forward<Sender>(s).connect(std::forward<Receiver>(r));
@@ -93,42 +94,7 @@ struct set_value_cpo {
 	}
 };
 
-struct set_value_inline_cpo {
-	template<typename Receiver, typename T>
-	requires requires(Receiver &&r, T &&value) {
-		std::forward<Receiver>(r).set_value_inline(std::forward<T>(value));
-	}
-	void operator() (Receiver &&r, T &&value) {
-		std::forward<Receiver>(r).set_value_inline(std::forward<T>(value));
-	}
-
-	template<typename Receiver>
-	requires requires(Receiver &&r) {
-		std::forward<Receiver>(r).set_value_inline();
-	}
-	void operator() (Receiver &&r) {
-		std::forward<Receiver>(r).set_value_inline();
-	}
-};
-
-struct set_value_noinline_cpo {
-	template<typename Receiver, typename T>
-	requires requires(Receiver &&r, T &&value) {
-		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
-	}
-	void operator() (Receiver &&r, T &&value) {
-		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
-	}
-
-	template<typename Receiver>
-	requires requires(Receiver &&r) {
-		std::forward<Receiver>(r).set_value_noinline();
-	}
-	void operator() (Receiver &&r) {
-		std::forward<Receiver>(r).set_value_noinline();
-	}
-};
-}
+} // namespace cpo_types
 
 namespace execution {
 	template<typename S, typename R>
@@ -138,8 +104,6 @@ namespace execution {
 	inline cpo_types::start_cpo start;
 	inline cpo_types::start_inline_cpo start_inline;
 	inline cpo_types::set_value_cpo set_value;
-	inline cpo_types::set_value_inline_cpo set_value_inline;
-	inline cpo_types::set_value_noinline_cpo set_value_noinline;
 }
 
 } // namespace async

@@ -188,17 +188,6 @@ struct [[nodiscard]] sender_ {
 		struct receiver_ {
 			operation_ &op_;
 
-			/* receiver bits */
-			template<typename... Ts>
-			requires(sizeof...(Ts) <= 1)
-			void set_value_inline(Ts &&...ts) {
-				op_.wg_.done();
-				execution::set_value_inline(
-					op_.originalr_,
-					std::forward<Ts>(ts)...
-				);
-			}
-
 			template<typename... Ts>
 			requires(sizeof...(Ts) <= 1)
 			void set_value_noinline(Ts &&...ts) {
