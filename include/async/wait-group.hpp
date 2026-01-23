@@ -190,7 +190,7 @@ struct [[nodiscard]] sender_ {
 
 			template<typename... Ts>
 			requires(sizeof...(Ts) <= 1)
-			void set_value_noinline(Ts &&...ts) {
+			void set_value(Ts &&...ts) {
 				op_.wg_.done();
 				execution::set_value(
 					op_.originalr_,

@@ -85,7 +85,7 @@ struct value_transform_receiver {
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
 	template<typename X>
-	void set_value_noinline(X value) {
+	void set_value(X value) {
 		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
 			f_(std::move(value));
 			execution::set_value(dr_);
@@ -104,7 +104,7 @@ struct void_transform_receiver {
 	void_transform_receiver(Receiver dr, F f)
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
-	void set_value_noinline() {
+	void set_value() {
 		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
 			f_();
 			execution::set_value(dr_);
@@ -274,7 +274,7 @@ private:
 		receiver(repeat_while_operation *self)
 		: self_{self} { }
 
-		void set_value_noinline() {
+		void set_value() {
 			auto s = self_; // box_.destruct() will destruct this.
 			s->box_.destruct();
 			if(s->loop_())
@@ -348,7 +348,7 @@ private:
 		internal_receiver(race_and_cancel_operation *self)
 		: self_{self} { }
 
-		void set_value_noinline() {
+		void set_value() {
 			auto n = self_->n_done_.fetch_add(1, std::memory_order_acq_rel);
 			if(!n) {
 				for(unsigned int j = 0; j < sizeof...(Is); ++j)
@@ -558,7 +558,7 @@ private:
 		receiver(sequence_operation *self)
 		: self_{self} { }
 
-		void set_value_noinline() requires (Index < sizeof...(Senders) - 1) {
+		void set_value() requires (Index < sizeof...(Senders) - 1) {
 			using operation_type = execution::operation_t<nth_sender<Index>,
 					receiver<Index, InlinePath>>;
 			auto s = self_; // following lines will destruct this.
@@ -569,7 +569,7 @@ private:
 			s->template do_step<Index + 1, false>();
 		}
 
-		void set_value_noinline()
+		void set_value()
 				requires ((Index == sizeof...(Senders) - 1)
 						&& (std::is_same_v<value_type, void>)) {
 			using operation_type = execution::operation_t<nth_sender<Index>,
@@ -582,7 +582,7 @@ private:
 		}
 
 		template <typename T>
-		void set_value_noinline(T value)
+		void set_value(T value)
 				requires ((Index == sizeof...(Senders) - 1)
 						&& (!std::is_same_v<value_type, void>)
 						&& (std::is_same_v<value_type, T>)) {
@@ -650,7 +650,7 @@ private:
 		receiver(when_all_operation *self)
 		: self_{self} { }
 
-		void set_value_noinline() {
+		void set_value() {
 			auto c = self_->ctr_.fetch_sub(1, std::memory_order_acq_rel);
 			assert(c > 0);
 			if(c == 1)

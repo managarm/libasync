@@ -79,6 +79,23 @@ struct start_inline_cpo {
 struct set_value_cpo {
 	template<typename Receiver, typename T>
 	requires requires(Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value(std::forward<T>(value));
+	}
+	void operator() (Receiver &&r, T &&value) {
+		std::forward<Receiver>(r).set_value(std::forward<T>(value));
+	}
+
+	template<typename Receiver>
+	requires requires(Receiver &&r) {
+		std::forward<Receiver>(r).set_value();
+	}
+	void operator() (Receiver &&r) {
+		std::forward<Receiver>(r).set_value();
+	}
+
+	// Obsolete set_value_noinline() functions.
+	template<typename Receiver, typename T>
+	requires requires(Receiver &&r, T &&value) {
 		std::forward<Receiver>(r).set_value_noinline(std::forward<T>(value));
 	}
 	void operator() (Receiver &&r, T &&value) {
