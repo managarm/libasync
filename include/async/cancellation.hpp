@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <tuple>
+
 #include <frg/list.hpp>
 #include "basic.hpp"
 
@@ -347,6 +349,116 @@ template<typename... C>
 requires(std::convertible_to<C, cancellation_token>&&...)
 inline suspend_indefinitely_sender<sizeof...(C)> suspend_indefinitely(C&&... cts) {
 	return {std::array<cancellation_token, sizeof...(C)>{cts...}};
+}
+
+//---------------------------------------------------------------------------------------
+// with_cancel_cb()
+//---------------------------------------------------------------------------------------
+
+template <typename R, Sender S, typename Cb>
+requires Receives<R, typename S::value_type>
+struct with_cancel_cb_operation {
+	using value_type = typename S::value_type;
+
+	with_cancel_cb_operation(S s, Cb cb, cancellation_token ct, R dr)
+	:  op_{execution::connect(std::move(s), intermediate_receiver{this})},
+		cb_{std::move(cb)},
+		dr_{std::move(dr)},
+		ct_{ct} { }
+
+	with_cancel_cb_operation(const with_cancel_cb_operation &) = delete;
+
+	with_cancel_cb_operation &operator=(const with_cancel_cb_operation &) = delete;
+
+	void start() {
+		cobs_.force_set(ct_);
+		execution::start(op_);
+	}
+
+private:
+	struct intermediate_receiver {
+		template <typename ...Args>
+		void set_value(Args &&...args) {
+			self->value_.emplace(std::forward<Args>(args)...);
+
+			// If try_reset() succeeds, the operation was not cancelled and cancel_state_ is irrelevant.
+			if (self->cobs_.try_reset()
+					|| self->cancel_state_.fetch_sub(1, std::memory_order_acq_rel) == 1)
+				self->complete_();
+		}
+
+		with_cancel_cb_operation *self;
+	};
+	static_assert(Receives<intermediate_receiver, value_type>);
+
+	struct cancel_handler {
+		void operator()() {
+			self->cb_();
+
+			if (self->cancel_state_.fetch_sub(1, std::memory_order_acq_rel) == 1)
+				self->complete_();
+		}
+
+		with_cancel_cb_operation *self;
+	};
+
+	void complete_() {
+		assert(value_);
+		if constexpr (std::is_same_v<value_type, void>) {
+			execution::set_value(std::move(dr_));
+		} else {
+			execution::set_value(std::move(dr_), std::move(*value_));
+		}
+	}
+
+	execution::operation_t<S, intermediate_receiver> op_;
+	Cb cb_;
+	R dr_;
+	cancellation_token ct_;
+	cancellation_observer<cancel_handler> cobs_{cancel_handler{this}};
+
+	// Valid if cancellation is triggered before try_reset():
+	// 2: Both cb_() and the operation are still running.
+	// 1: Either cb_() or the operation (both not both) are still running.
+	// 0: Both cb_() and the operation are done.
+	std::atomic<int> cancel_state_{2};
+
+	struct empty { };
+
+	std::optional<
+		std::conditional_t<
+			std::is_same_v<value_type, void>,
+			empty,
+			value_type
+		>
+	> value_;
+};
+
+template <Sender S, typename Cb>
+struct [[nodiscard]] with_cancel_cb_sender {
+	using value_type = typename S::value_type;
+
+	template<typename R>
+	requires Receives<R, value_type>
+	friend with_cancel_cb_operation<R, S, Cb>
+	connect(with_cancel_cb_sender s, R r) {
+		return {std::move(s.s), std::move(s.cb), s.ct, std::move(r)};
+	}
+
+	S s;
+	Cb cb;
+	cancellation_token ct;
+};
+
+template <Sender S, typename Cb>
+with_cancel_cb_sender<S, Cb> with_cancel_cb(S s, Cb cb, cancellation_token ct) {
+	return {std::move(s), std::move(cb), ct};
+}
+
+template <Sender S, typename Cb>
+sender_awaiter<with_cancel_cb_sender<S, Cb>, typename S::value_type>
+operator co_await(with_cancel_cb_sender<S, Cb> s) {
+	return {std::move(s)};
 }
 
 } // namespace async
