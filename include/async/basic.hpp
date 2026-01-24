@@ -355,59 +355,19 @@ private:
 // Top-level execution functions.
 // ----------------------------------------------------------------------------
 
+// TODO: It makes more sense to demand a run() method.
 template<typename T>
 concept Waitable = requires (T t) {
 	t.wait();
 };
 
-template<Waitable IoService>
-void run_forever(IoService ios) {
-	while(true) {
-		ios.wait();
+struct dummy_io_service {
+	void wait() {
+		// TODO: dummy_io_service could use a futex to wait.
+		platform::panic("dummy_io_service does not know how to wait");
 	}
-}
-
-template<Sender Sender>
-requires std::same_as<typename Sender::value_type, void>
-void run(Sender s) {
-	struct receiver {
-		void set_value() { }
-	};
-
-	auto operation = execution::connect(std::move(s), receiver{});
-	if(execution::start_inline(operation))
-		return;
-
-	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
-}
-
-template<Sender Sender>
-requires (!std::same_as<typename Sender::value_type, void>)
-typename Sender::value_type run(Sender s) {
-	struct state {
-		frg::optional<typename Sender::value_type> value;
-	};
-
-	struct receiver {
-		receiver(state *stp)
-		: stp_{stp} { }
-
-		void set_value(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-		}
-
-	private:
-		state *stp_;
-	};
-
-	state st;
-
-	auto operation = execution::connect(std::move(s), receiver{&st});
-	if (execution::start_inline(operation))
-		return std::move(*st.value);
-
-	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
-}
+};
+static_assert(Waitable<dummy_io_service>);
 
 template<Sender Sender, Waitable IoService>
 requires std::same_as<typename Sender::value_type, void>
@@ -431,8 +391,7 @@ void run(Sender s, IoService ios) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	if(execution::start_inline(operation))
-		return;
+	execution::start(operation);
 
 	while(!st.done) {
 		ios.wait();
@@ -463,14 +422,42 @@ typename Sender::value_type run(Sender s, IoService ios) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	if(execution::start_inline(operation))
-		return std::move(*st.value);
+	execution::start(operation);
 
 	while(!st.done) {
 		ios.wait();
 	}
 
 	return std::move(*st.value);
+}
+
+template<Sender Sender>
+auto run(Sender s) {
+	return run(std::move(s), dummy_io_service{});
+}
+
+template<Receives<void> R>
+struct forever_operation {
+	void start() {
+		// Do nothing.
+	}
+
+	R receiver;
+};
+
+struct forever_sender {
+	using value_type = void;
+
+	template<Receives<void> R>
+	forever_operation<R> connect(R &&receiver) {
+		return {std::move(receiver)};
+	}
+};
+static_assert(Sender<forever_sender>);
+
+template<Waitable IoService>
+void run_forever(IoService ios) {
+	return run(forever_sender{}, std::move(ios));
 }
 
 // ----------------------------------------------------------------------------
