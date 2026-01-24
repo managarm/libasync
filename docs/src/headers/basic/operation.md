@@ -27,7 +27,7 @@ struct write_operation {
     write_operation(write_operation &&) = delete;
     write_operation &operator=(write_operation &&) = delete;
 
-    bool start_inline() { /* omitted for brevity */ }
+    void start() { /* omitted for brevity */ }
 
 private:
     uv_write_t req_;

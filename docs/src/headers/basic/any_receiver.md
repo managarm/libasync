@@ -12,7 +12,6 @@ struct any_receiver {
 	any_receiver(R receiver); // (1)
 
 	void set_value(T); // (2)
-	void set_value_noinline(T); // (2)
 }
 ```
 

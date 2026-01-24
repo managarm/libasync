@@ -13,26 +13,17 @@ concept Receives = ...;
 
 ### Requirements
 
-A `set_value_inline` and `set_value_noinline` members, which can be called with
-a `T&&` value, or no parameters, if `T` is `void`.
+A `set_value` member which can be called with a `T&&` value, or no parameters, if `T` is `void`.
 
 ## Examples
 
 ```cpp
 struct discard_receiver {
 	template<typename T>
-	void set_value_inline(T) {
+	void set_value(T) {
 		assert(std::is_constant_evaluated());
 	}
-	void set_value_inline() {
-		assert(std::is_constant_evaluated());
-	}
-
-	template<typename T>
-	void set_value_noinline(T) {
-		assert(std::is_constant_evaluated());
-	}
-	void set_value_noinline() {
+	void set_value() {
 		assert(std::is_constant_evaluated());
 	}
 };
