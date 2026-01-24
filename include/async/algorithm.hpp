@@ -40,14 +40,13 @@ struct [[nodiscard]] invocable_operation {
 
 	invocable_operation &operator= (const invocable_operation &) = delete;
 
-	bool start_inline() {
+	void start() {
 		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
 			f_();
-			execution::set_value_inline(r_);
+			return execution::set_value(r_);
 		}else{
-			execution::set_value_inline(r_, f_());
+			return execution::set_value(r_, f_());
 		}
-		return true;
 	}
 
 private:
@@ -86,22 +85,12 @@ struct value_transform_receiver {
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
 	template<typename X>
-	void set_value_inline(X value) {
+	void set_value(X value) {
 		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
 			f_(std::move(value));
-			execution::set_value_inline(dr_);
+			execution::set_value(dr_);
 		}else{
-			execution::set_value_inline(dr_, f_(std::move(value)));
-		}
-	}
-
-	template<typename X>
-	void set_value_noinline(X value) {
-		if constexpr (std::is_same_v<std::invoke_result_t<F, X>, void>) {
-			f_(std::move(value));
-			execution::set_value_noinline(dr_);
-		}else{
-			execution::set_value_noinline(dr_, f_(std::move(value)));
+			execution::set_value(dr_, f_(std::move(value)));
 		}
 	}
 
@@ -115,21 +104,12 @@ struct void_transform_receiver {
 	void_transform_receiver(Receiver dr, F f)
 	: dr_{std::move(dr)}, f_{std::move(f)} { }
 
-	void set_value_inline() {
+	void set_value() {
 		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
 			f_();
-			execution::set_value_inline(dr_);
+			execution::set_value(dr_);
 		}else{
-			execution::set_value_inline(dr_, f_());
-		}
-	}
-
-	void set_value_noinline() {
-		if constexpr (std::is_same_v<std::invoke_result_t<F>, void>) {
-			f_();
-			execution::set_value_noinline(dr_);
-		}else{
-			execution::set_value_noinline(dr_, f_());
+			execution::set_value(dr_, f_());
 		}
 	}
 
@@ -205,17 +185,17 @@ struct [[nodiscard]] ite_operation {
 			else_op_.destruct();
 		}
 
-	bool start_inline() {
+	void start() {
 		if(cond_()) {
 			then_op_.construct_with([&] {
 				return execution::connect(std::move(then_s_), std::move(dr_));
 			});
-			return execution::start_inline(*then_op_);
+			return execution::start(*then_op_);
 		}else{
 			else_op_.construct_with([&] {
 				return execution::connect(std::move(else_s_), std::move(dr_));
 			});
-			return execution::start_inline(*else_op_);
+			return execution::start(*else_op_);
 		}
 	}
 
@@ -270,13 +250,9 @@ struct [[nodiscard]] repeat_while_operation {
 
 	repeat_while_operation &operator=(const repeat_while_operation &) = delete;
 
-	bool start_inline() {
-		if(loop_()) {
-			execution::set_value_inline(dr_);
-			return true;
-		}
-
-		return false;
+	void start() {
+		if(loop_())
+			return execution::set_value(dr_);
 	}
 
 private:
@@ -298,15 +274,11 @@ private:
 		receiver(repeat_while_operation *self)
 		: self_{self} { }
 
-		void set_value_inline() {
-			// Do nothing.
-		}
-
-		void set_value_noinline() {
+		void set_value() {
 			auto s = self_; // box_.destruct() will destruct this.
 			s->box_.destruct();
 			if(s->loop_())
-				execution::set_value_noinline(s->dr_);
+				execution::set_value(s->dr_);
 		}
 
 	private:
@@ -376,10 +348,7 @@ private:
 		internal_receiver(race_and_cancel_operation *self)
 		: self_{self} { }
 
-		void set_value_inline() {
-		}
-
-		void set_value_noinline() {
+		void set_value() {
 			auto n = self_->n_done_.fetch_add(1, std::memory_order_acq_rel);
 			if(!n) {
 				for(unsigned int j = 0; j < sizeof...(Is); ++j)
@@ -387,7 +356,7 @@ private:
 						self_->cs_[j].cancel();
 			}
 			if(n + 1 == sizeof...(Is))
-				execution::set_value_noinline(self_->r_);
+				execution::set_value(self_->r_);
 		}
 
 	private:
@@ -418,7 +387,7 @@ public:
 	race_and_cancel_operation(race_and_cancel_sender<Functors...> s, Receiver r)
 	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_sync_{0}, n_done_{0} { }
 
-	bool start_inline() {
+	void start() {
 		unsigned int n_sync = 0;
 
 		((execution::start_inline(ops_.template get<Is>())
@@ -432,13 +401,9 @@ public:
 					cs_[j].cancel();
 			}
 
-			if ((n + n_sync) == sizeof...(Is)) {
-				execution::set_value_inline(r_);
-				return true;
-			}
+			if ((n + n_sync) == sizeof...(Is))
+				return execution::set_value(r_);
 		}
-
-		return false;
 	}
 
 private:
@@ -482,10 +447,10 @@ struct let_operation {
 	}
 
 public:
-	bool start_inline() {
+	void start() {
 		imm_ = std::move(pred_());
 		op_.construct_with([&]{ return execution::connect(func_(imm_), std::move(r_)); });
-		return execution::start_inline(*op_);
+		return execution::start(*op_);
 	}
 
 private:
@@ -538,7 +503,7 @@ struct [[nodiscard]] sequence_operation {
 
 	sequence_operation &operator=(const sequence_operation &) = delete;
 
-	bool start_inline() {
+	void start() {
 		return do_step<0, true>();
 	}
 
@@ -548,7 +513,7 @@ private:
 
 	template <size_t Index, bool InlinePath>
 	requires (InlinePath)
-	bool do_step() {
+	void do_step() {
 		using operation_type = execution::operation_t<nth_sender<Index>,
 				receiver<Index, true>>;
 
@@ -559,12 +524,11 @@ private:
 
 		if(execution::start_inline(*op)) {
 			if constexpr (Index == sizeof...(Senders) - 1) {
-				return true;
+				return;
 			}else{
 				return do_step<Index + 1, true>();
 			}
 		}
-		return false;
 	}
 
 	// Same as above but since we are not on the InlinePath, we do not care about the return value.
@@ -594,16 +558,7 @@ private:
 		receiver(sequence_operation *self)
 		: self_{self} { }
 
-		void set_value_inline() requires (Index < sizeof...(Senders) - 1) {
-			using operation_type = execution::operation_t<nth_sender<Index>,
-					receiver<Index, InlinePath>>;
-			auto op = std::launder(reinterpret_cast<operation_type *>(self_->box_.buffer));
-			op->~operation_type();
-
-			// Do nothing: execution continues in do_step().
-		}
-
-		void set_value_noinline() requires (Index < sizeof...(Senders) - 1) {
+		void set_value() requires (Index < sizeof...(Senders) - 1) {
 			using operation_type = execution::operation_t<nth_sender<Index>,
 					receiver<Index, InlinePath>>;
 			auto s = self_; // following lines will destruct this.
@@ -614,7 +569,7 @@ private:
 			s->template do_step<Index + 1, false>();
 		}
 
-		void set_value_inline()
+		void set_value()
 				requires ((Index == sizeof...(Senders) - 1)
 						&& (std::is_same_v<value_type, void>)) {
 			using operation_type = execution::operation_t<nth_sender<Index>,
@@ -623,27 +578,11 @@ private:
 			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
 			op->~operation_type();
 
-			if(InlinePath) {
-				execution::set_value_inline(s->dr_);
-			}else{
-				execution::set_value_noinline(s->dr_);
-			}
-		}
-
-		void set_value_noinline()
-				requires ((Index == sizeof...(Senders) - 1)
-						&& (std::is_same_v<value_type, void>)) {
-			using operation_type = execution::operation_t<nth_sender<Index>,
-					receiver<Index, InlinePath>>;
-			auto s = self_; // following lines will destruct this.
-			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
-			op->~operation_type();
-
-			execution::set_value_noinline(s->dr_);
+			execution::set_value(s->dr_);
 		}
 
 		template <typename T>
-		void set_value_inline(T value)
+		void set_value(T value)
 				requires ((Index == sizeof...(Senders) - 1)
 						&& (!std::is_same_v<value_type, void>)
 						&& (std::is_same_v<value_type, T>)) {
@@ -653,25 +592,7 @@ private:
 			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
 			op->~operation_type();
 
-			if(InlinePath) {
-				execution::set_value_inline(s->dr_, std::move(value));
-			}else{
-				execution::set_value_noinline(s->dr_, std::move(value));
-			}
-		}
-
-		template <typename T>
-		void set_value_noinline(T value)
-				requires ((Index == sizeof...(Senders) - 1)
-						&& (!std::is_same_v<value_type, void>)
-						&& (std::is_same_v<value_type, T>)) {
-			using operation_type = execution::operation_t<nth_sender<Index>,
-					receiver<Index, InlinePath>>;
-			auto s = self_; // following lines will destruct this.
-			auto op = std::launder(reinterpret_cast<operation_type *>(s->box_.buffer));
-			op->~operation_type();
-
-			execution::set_value_noinline(s->dr_, std::move(value));
+			execution::set_value(s->dr_, std::move(value));
 		}
 
 	private:
@@ -729,15 +650,11 @@ private:
 		receiver(when_all_operation *self)
 		: self_{self} { }
 
-		void set_value_inline() {
-			// Simply do nothing.
-		}
-
-		void set_value_noinline() {
+		void set_value() {
 			auto c = self_->ctr_.fetch_sub(1, std::memory_order_acq_rel);
 			assert(c > 0);
 			if(c == 1)
-				execution::set_value_noinline(self_->dr_);
+				execution::set_value(self_->dr_);
 		}
 
 	private:
@@ -760,7 +677,7 @@ public:
 		ops_{make_operations_tuple(std::index_sequence_for<Senders...>{}, std::move(senders))},
 		ctr_{sizeof...(Senders)} { }
 
-	bool start_inline() {
+	void start() {
 		int n_fast = 0;
 		[&]<size_t... Is> (std::index_sequence<Is...>) {
 			([&] <size_t I> () {
@@ -771,11 +688,8 @@ public:
 
 		auto c = ctr_.fetch_sub(n_fast, std::memory_order_acq_rel);
 		assert(c > 0);
-		if(c == n_fast) {
-			execution::set_value_inline(dr_);
-			return true;
-		}
-		return false;
+		if(c == n_fast)
+			return execution::set_value(dr_);
 	}
 
 	Receiver dr_; // Downstream receiver.
@@ -817,8 +731,8 @@ struct lambda_operation {
 	lambda_operation(R receiver, Fn fn, std::tuple<Args...> args)
 	: fn_{std::move(fn)}, op_{execution::connect(std::apply(fn_, args), std::move(receiver))} { }
 
-	bool start_inline() {
-		return execution::start_inline(op_);
+	void start() {
+		return execution::start(op_);
 	}
 
 	Fn fn_;

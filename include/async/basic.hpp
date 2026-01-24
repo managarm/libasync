@@ -40,12 +40,14 @@ namespace async {
 template<typename T, typename Value>
 concept Receives = std::movable<T>
 && (std::same_as<Value, void> ?
-requires(T t) {
-	{ t.set_value_inline() } -> std::same_as<void>;
+(requires(T t) {
+	{ t.set_value() } -> std::same_as<void>;
+} || requires(T t) {
 	{ t.set_value_noinline() } -> std::same_as<void>;
-}
-: requires(T t) {
-	{ t.set_value_inline(std::declval<Value>()) } -> std::same_as<void>;
+})
+: (requires(T t) {
+	{ t.set_value(std::declval<Value>()) } -> std::same_as<void>;
+}) || requires(T t) {
 	{ t.set_value_noinline(std::declval<Value>()) } -> std::same_as<void>;
 });
 
@@ -54,19 +56,10 @@ template<auto>
 struct dummy_receiver {
 	template<typename T>
 	requires (!std::same_as<T, void>)
-	void set_value_inline(T) {
+	void set_value(T) {
 		assert(std::is_constant_evaluated());
 	}
-	void set_value_inline() {
-		assert(std::is_constant_evaluated());
-	}
-
-	template<typename T>
-	requires (!std::same_as<T, void>)
-	void set_value_noinline(T) {
-		assert(std::is_constant_evaluated());
-	}
-	void set_value_noinline() {
+	void set_value() {
 		assert(std::is_constant_evaluated());
 	}
 };
@@ -127,11 +120,7 @@ template<typename S, typename T = void>
 struct [[nodiscard]] sender_awaiter {
 private:
 	struct receiver {
-		void set_value_inline(T result) {
-			p_->result_.emplace(std::move(result));
-		}
-
-		void set_value_noinline(T result) {
+		void set_value(T result) {
 			p_->result_.emplace(std::move(result));
 			p_->h_.resume();
 		}
@@ -167,11 +156,7 @@ template<typename S>
 struct [[nodiscard]] sender_awaiter<S, void> {
 private:
 	struct receiver {
-		void set_value_inline() {
-			// Do nothing.
-		}
-
-		void set_value_noinline() {
+		void set_value() {
 			p_->h_.resume();
 		}
 
@@ -220,15 +205,11 @@ struct any_receiver {
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p, T value) {
 			auto *rp = static_cast<R *>(p);
-			execution::set_value_noinline(*rp, std::move(value));
+			execution::set_value(*rp, std::move(value));
 		};
 	}
 
 	void set_value(T value) {
-		set_value_fptr_(stor_, std::move(value));
-	}
-
-	void set_value_noinline(T value) {
 		set_value_fptr_(stor_, std::move(value));
 	}
 
@@ -249,15 +230,11 @@ struct any_receiver<void> {
 		new (stor_) R(receiver);
 		set_value_fptr_ = [] (void *p) {
 			auto *rp = static_cast<R *>(p);
-			execution::set_value_noinline(*rp);
+			execution::set_value(*rp);
 		};
 	}
 
 	void set_value() {
-		set_value_fptr_(stor_);
-	}
-
-	void set_value_noinline() {
 		set_value_fptr_(stor_);
 	}
 
@@ -378,65 +355,19 @@ private:
 // Top-level execution functions.
 // ----------------------------------------------------------------------------
 
+// TODO: It makes more sense to demand a run() method.
 template<typename T>
 concept Waitable = requires (T t) {
 	t.wait();
 };
 
-template<Waitable IoService>
-void run_forever(IoService ios) {
-	while(true) {
-		ios.wait();
+struct dummy_io_service {
+	void wait() {
+		// TODO: dummy_io_service could use a futex to wait.
+		platform::panic("dummy_io_service does not know how to wait");
 	}
-}
-
-template<Sender Sender>
-requires std::same_as<typename Sender::value_type, void>
-void run(Sender s) {
-	struct receiver {
-		void set_value_inline() { }
-
-		void set_value_noinline() { }
-	};
-
-	auto operation = execution::connect(std::move(s), receiver{});
-	if(execution::start_inline(operation))
-		return;
-
-	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
-}
-
-template<Sender Sender>
-requires (!std::same_as<typename Sender::value_type, void>)
-typename Sender::value_type run(Sender s) {
-	struct state {
-		frg::optional<typename Sender::value_type> value;
-	};
-
-	struct receiver {
-		receiver(state *stp)
-		: stp_{stp} { }
-
-		void set_value_inline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-		}
-
-		void set_value_noinline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-		}
-
-	private:
-		state *stp_;
-	};
-
-	state st;
-
-	auto operation = execution::connect(std::move(s), receiver{&st});
-	if (execution::start_inline(operation))
-		return std::move(*st.value);
-
-	platform::panic("libasync: Operation hasn't completed and we don't know how to wait");
-}
+};
+static_assert(Waitable<dummy_io_service>);
 
 template<Sender Sender, Waitable IoService>
 requires std::same_as<typename Sender::value_type, void>
@@ -449,11 +380,7 @@ void run(Sender s, IoService ios) {
 		receiver(state *stp)
 		: stp_{stp} { }
 
-		void set_value_inline() {
-			stp_->done = true;
-		}
-
-		void set_value_noinline() {
+		void set_value() {
 			stp_->done = true;
 		}
 
@@ -464,8 +391,7 @@ void run(Sender s, IoService ios) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	if(execution::start_inline(operation))
-		return;
+	execution::start(operation);
 
 	while(!st.done) {
 		ios.wait();
@@ -484,12 +410,7 @@ typename Sender::value_type run(Sender s, IoService ios) {
 		receiver(state *stp)
 		: stp_{stp} { }
 
-		void set_value_inline(typename Sender::value_type value) {
-			stp_->value.emplace(std::move(value));
-			stp_->done = true;
-		}
-
-		void set_value_noinline(typename Sender::value_type value) {
+		void set_value(typename Sender::value_type value) {
 			stp_->value.emplace(std::move(value));
 			stp_->done = true;
 		}
@@ -501,14 +422,42 @@ typename Sender::value_type run(Sender s, IoService ios) {
 	state st;
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
-	if(execution::start_inline(operation))
-		return std::move(*st.value);
+	execution::start(operation);
 
 	while(!st.done) {
 		ios.wait();
 	}
 
 	return std::move(*st.value);
+}
+
+template<Sender Sender>
+auto run(Sender s) {
+	return run(std::move(s), dummy_io_service{});
+}
+
+template<Receives<void> R>
+struct forever_operation {
+	void start() {
+		// Do nothing.
+	}
+
+	R receiver;
+};
+
+struct forever_sender {
+	using value_type = void;
+
+	template<Receives<void> R>
+	forever_operation<R> connect(R &&receiver) {
+		return {std::move(receiver)};
+	}
+};
+static_assert(Sender<forever_sender>);
+
+template<Waitable IoService>
+void run_forever(IoService ios) {
+	return run(forever_sender{}, std::move(ios));
 }
 
 // ----------------------------------------------------------------------------
@@ -551,11 +500,7 @@ namespace detach_details_ {
 		final_receiver(control_block<Allocator, S, Cont> *cb)
 		: cb_{cb} { }
 
-		void set_value_inline() {
-			finalize(cb_);
-		}
-
-		void set_value_noinline() {
+		void set_value() {
 			finalize(cb_);
 		}
 
@@ -621,14 +566,8 @@ namespace spawn_details_ {
 		: cb_{cb} { }
 
 		template<typename... Args>
-		void set_value_inline(Args &&... args) {
-			cb_->dr.set_value_inline(std::forward<Args>(args)...);
-			finalize(cb_);
-		}
-
-		template<typename... Args>
-		void set_value_noinline(Args &&... args) {
-			cb_->dr.set_value_noinline(std::forward<Args>(args)...);
+		void set_value(Args &&... args) {
+			execution::set_value(cb_->dr, std::forward<Args>(args)...);
 			finalize(cb_);
 		}
 

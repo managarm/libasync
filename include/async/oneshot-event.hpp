@@ -71,13 +71,11 @@ public:
 		wait_operation(oneshot_primitive *evt, Receiver r)
 		: node{&complete}, evt_{evt}, r_{std::move(r)} { }
 
-		bool start_inline() {
+		void start() {
 			node *current = evt_->state_.load(std::memory_order_acquire);
 			while (true) {
-				if (current == fired()) {
-					execution::set_value_inline(r_);
-					return true;
-				}
+				if (current == fired())
+					return execution::set_value(r_);
 				next_ = current;
 				auto success = evt_->state_.compare_exchange_weak(
 					current,
@@ -86,14 +84,14 @@ public:
 					std::memory_order_acquire
 				);
 				if (success)
-					return false;
+					return;
 			}
 		}
 
 	private:
 		static void complete(node *base) {
 			auto self = static_cast<wait_operation *>(base);
-			execution::set_value_noinline(self->r_);
+			execution::set_value(self->r_);
 		}
 
 		oneshot_primitive *evt_;

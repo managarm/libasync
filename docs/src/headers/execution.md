@@ -10,10 +10,7 @@ This header contains customization point objects (CPOs) for the following
 methods/functions:
  - `connect` (as a member or function),
  - `start` (as a member or function),
- - `start_inline` (as a member),
  - `set_value` (as a member),
- - `set_value_inline` (as a member),
- - `set_value_noinline` (as a member).
 
 In addition to that, it provides a convenience type definition for working with operations:
 ```cpp
@@ -25,5 +22,5 @@ using operation_t = std::invoke_result_t<connect_cpo, S, R>;
 
 ```cpp
 auto op = async::execution::connect(my_sender, my_receiver);
-bool finished_inline = async::execution::start_inline(op);
+async::execution::start(op);
 ```

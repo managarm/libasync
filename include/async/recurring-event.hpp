@@ -78,7 +78,7 @@ public:
 		wait_if_operation(recurring_event *evt, C cond, cancellation_token ct, Receiver r)
 		: evt_{evt}, cond_{std::move(cond)}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
 
-		bool start_inline() {
+		void start() {
 			assert(st_ == state::none);
 
 			bool retire_condfail = false;
@@ -101,14 +101,11 @@ public:
 
 			if(retire_condfail) {
 				st_ = state::retired;
-				execution::set_value_inline(r_, maybe_awaited::condition_failed);
-				return true;
+				return execution::set_value(r_, maybe_awaited::condition_failed);
 			}else if(retire_cancelled) {
 				st_ = state::retired;
-				execution::set_value_inline(r_, maybe_cancelled::cancelled);
-				return true;
+				return execution::set_value(r_, maybe_cancelled::cancelled);
 			}
-			return false;
 		}
 
 	private:
@@ -127,13 +124,13 @@ public:
 			}
 
 			st_ = state::retired;
-			execution::set_value_noinline(r_, maybe_cancelled::cancelled);
+			execution::set_value(r_, maybe_cancelled::cancelled);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset()) {
 				st_ = state::retired;
-				execution::set_value_noinline(r_, maybe_awaited::awaited);
+				execution::set_value(r_, maybe_awaited::awaited);
 			}
 		}
 

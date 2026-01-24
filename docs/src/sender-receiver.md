@@ -22,17 +22,8 @@ asynchronous operation. It is immovable, and as such pointers to it will remain
 valid for as long as the operation exists. When the operation is finished, it
 notifies the receiver and optionally passes it a result value.
 
-Every operation must either have a `void start()` or a `bool start_inline()` method
-that is invoked when the operation is first started. `void start()` is equivalent to
-`bool start_inline()` with `return false;` at the end.
-
-#### Inline and no-inline completion
-
-Operations that complete synchronously can signal inline completion. If an operation
-completes inline, it sets the value using `set_value_inline`, and returns `true` from
-`start_inline` (Operations that have a `start` method cannot complete inline). Inline
-completion allows for certain optimizations, like avoiding suspending the coroutine
-if the operation completed synchronously.
+Every operation must either have a `void start()` method
+that is invoked when the operation is first started.
 
 ### Receiver
 
@@ -40,5 +31,5 @@ A receiver is an object that knows what to do after an operation finishes (e.g. 
 resume the coroutine). It optionally receives a result value from the operation.
 It is moveable.
 
-Every receiver must have `void set_value_inline(...)` and `void set_value_noinline(...)`
-methods that are invoked by the operation when it completes.
+Every receiver must have a `void set_value(...)`
+method that is invoked by the operation when it completes.

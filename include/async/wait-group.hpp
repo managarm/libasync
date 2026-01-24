@@ -84,7 +84,7 @@ public:
 		wait_operation(wait_group *wg, cancellation_token ct, Receiver r)
 		: wg_{wg}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
 
-		bool start_inline() {
+		void start() {
 			bool cancelled = false;
 			{
 				frg::unique_lock lock(wg_->mutex_);
@@ -94,13 +94,12 @@ public:
 						cancelled = true;
 					}else{
 						wg_->queue_.push_back(this);
-						return false;
+						return;
 					}
 				}
 			}
 
-			execution::set_value_inline(r_, !cancelled);
-			return true;
+			return execution::set_value(r_, !cancelled);
 		}
 
 	private:
@@ -116,12 +115,12 @@ public:
 				}
 			}
 
-			execution::set_value_noinline(r_, !cancelled);
+			execution::set_value(r_, !cancelled);
 		}
 
 		void complete() override {
 			if(cobs_.try_reset())
-				execution::set_value_noinline(r_, true);
+				execution::set_value(r_, true);
 		}
 
 		wait_group *wg_;
@@ -189,22 +188,11 @@ struct [[nodiscard]] sender_ {
 		struct receiver_ {
 			operation_ &op_;
 
-			/* receiver bits */
 			template<typename... Ts>
 			requires(sizeof...(Ts) <= 1)
-			void set_value_inline(Ts &&...ts) {
+			void set_value(Ts &&...ts) {
 				op_.wg_.done();
-				execution::set_value_inline(
-					op_.originalr_,
-					std::forward<Ts>(ts)...
-				);
-			}
-
-			template<typename... Ts>
-			requires(sizeof...(Ts) <= 1)
-			void set_value_noinline(Ts &&...ts) {
-				op_.wg_.done();
-				execution::set_value_noinline(
+				execution::set_value(
 					op_.originalr_,
 					std::forward<Ts>(ts)...
 				);
@@ -219,9 +207,9 @@ struct [[nodiscard]] sender_ {
 			, originalop_(execution::connect(std::move(s.originals_), receiver_{*this}))
 		{}
 
-		bool start_inline() {
+		void start() {
 			wg_.add(1);
-			return execution::start_inline(originalop_);
+			return execution::start(originalop_);
 		}
 
 		operation_(const operation_&) = delete;

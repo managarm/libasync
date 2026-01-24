@@ -67,7 +67,7 @@ public:
 		get_operation(queue *q, cancellation_token ct, Receiver r)
 		: q_{q}, ct_{std::move(ct)}, r_{std::move(r)} { }
 
-		bool start_inline() {
+		void start() {
 			bool retire = false;
 			{
 				frg::unique_lock lock{q_->mutex_};
@@ -86,11 +86,8 @@ public:
 				}
 			}
 
-			if(retire) {
-				execution::set_value_inline(r_, std::move(value));
-				return true;
-			}
-			return false;
+			if(retire)
+				return execution::set_value(r_, std::move(value));
 		}
 
 	private:
@@ -108,11 +105,11 @@ public:
 				}
 			}
 
-			execution::set_value_noinline(r_, std::move(value));
+			execution::set_value(r_, std::move(value));
 		}
 
 		void complete() override {
-			execution::set_value_noinline(r_, std::move(value));
+			execution::set_value(r_, std::move(value));
 		}
 
 		queue *q_;

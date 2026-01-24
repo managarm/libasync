@@ -6,8 +6,6 @@ if meson.get_compiler('cpp').has_argument('-fcoroutines')
 elif meson.get_compiler('cpp').has_argument('-fcoroutines-ts')
 	cpp_args += [ '-fcoroutines-ts', '-DLIBASYNC_FORCE_USE_EXPERIMENTAL', '-fsized-deallocation' ]
 	deps += subproject('cxxshim').get_variable('clang_coroutine_dep')
-else
-	error('Unsupported compiler')
 endif
 
 deps += subproject('frigg').get_variable('frigg_dep')

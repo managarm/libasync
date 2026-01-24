@@ -28,11 +28,7 @@ This function doesn't return any value.
 
 ```cpp
 struct my_receiver {
-	void set_value_inline(int value) {
-		std::cout << "Value: " << value << std::endl;
-	}
-
-	void set_value_noinline(int value) {
+	void set_value(int value) {
 		std::cout << "Value: " << value << std::endl;
 	}
 };

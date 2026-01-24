@@ -114,24 +114,20 @@ type in order to support any receiver type.
 The operation is also made immovable and non-copyable so that pointers to it can
 safely be taken without worrying that they may become invalid at some point.
 
-Next, we add a `start_inline` method:
+Next, we add a `start` method:
 ```cpp
-bool start_inline() {
+void start() {
 	auto result = uv_write(&req_, handle_, bufs_, nbufs_, [] (uv_write_t *req, int status) {
 		/* TODO */
 	});
 
-	if (result < 0) {
-		async::execution::set_value_inline(r_, result);
-		return true; // Completed inline
-	}
-
-	return false; // Did not complete inline
+	if (result < 0)
+		async::execution::set_value(r_, result); // Completed inline
 }
 ```
 
-We use `start_inline` here in order to notify the user of any immediate errors
-synchronously. We use functions defined inside of `async::execution` to set the
+Here, `start` completes synchronously if any errors happen immediately.
+We use functions defined inside of `async::execution` to set the
 value, because they properly detect which method should be called on the receiver.
 
 Now, let's implement the actual asynchronous completion:
@@ -160,11 +156,11 @@ Finally, we add our `complete` method:
 ```cpp
 private:
 	void complete(int status) {
-		async::execution::set_value_noinline(r_, status);
+		async::execution::set_value(r_, status);
 	}
 ```
 
-On `complete`, we use `async::execution::set_value_noinline` to set the result
+On `complete`, we use `async::execution::set_value` to set the result
 value and notify the receiver that the operation is complete (so that it can
 for example resume the suspended coroutine, like the `async::sender_awaiter` receiver).
 
@@ -212,24 +208,20 @@ struct write_operation {
 	write_operation(write_operation &&) = delete;
 	write_operation &operator=(write_operation &&) = delete;
 
-	bool start_inline() {
+	void start() {
 		handle_->data = this;
 		auto result = uv_write(&req_, handle_, bufs_, nbufs_, [] (uv_write_t *req, int status) {
 			auto op = static_cast<write_operation *>(req->handle->data);
 			op->complete(status);
 		});
 
-		if (result < 0) {
-			async::execution::set_value_inline(r_, result);
-			return true; // Completed inline
-		}
-
-		return false; // Did not complete inline
+		if (result < 0)
+			async::execution::set_value(r_, result);
 	}
 
 private:
 	void complete(int status) {
-		async::execution::set_value_noinline(r_, status);
+		async::execution::set_value(r_, status);
 	}
 
 	uv_write_t req_;
