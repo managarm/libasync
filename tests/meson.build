@@ -21,7 +21,8 @@ sources = files(
 	'oneshot.cpp',
 	'promise.cpp',
 	'sequenced.cpp',
-	'post-ack.cpp'
+	'post-ack.cpp',
+	'with_cancel_cb.cpp',
 )
 
 exe = executable('gtests',
