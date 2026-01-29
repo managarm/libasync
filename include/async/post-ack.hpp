@@ -115,6 +115,8 @@ public:
 	};
 
 	struct [[nodiscard]] post_sender {
+		using value_type = void;
+
 		friend sender_awaiter<post_sender> operator co_await (post_sender sender) {
 			return {std::move(sender)};
 		}

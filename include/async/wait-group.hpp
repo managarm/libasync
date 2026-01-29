@@ -197,6 +197,10 @@ struct [[nodiscard]] sender_ {
 					std::forward<Ts>(ts)...
 				);
 			}
+
+			auto get_env() {
+				return execution::get_env(op_.originalr_);
+			}
 		};
 
 		execution::operation_t<OriginalS, receiver_> originalop_;

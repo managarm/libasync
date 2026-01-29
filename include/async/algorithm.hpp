@@ -94,6 +94,10 @@ struct value_transform_receiver {
 		}
 	}
 
+	auto get_env() {
+		return execution::get_env(dr_);
+	}
+
 private:
 	Receiver dr_; // Downstream receiver.
 	[[no_unique_address]] F f_;
@@ -111,6 +115,10 @@ struct void_transform_receiver {
 		}else{
 			execution::set_value(dr_, f_());
 		}
+	}
+
+	auto get_env() {
+		return execution::get_env(dr_);
 	}
 
 private:
@@ -281,6 +289,10 @@ private:
 				execution::set_value(s->dr_);
 		}
 
+		auto get_env() {
+			return execution::get_env(self_->dr_);
+		}
+
 	private:
 		repeat_while_operation *self_;
 	};
@@ -357,6 +369,10 @@ private:
 			}
 			if(n + 1 == sizeof...(Is))
 				execution::set_value(self_->r_);
+		}
+
+		auto get_env() {
+			return execution::get_env(self_->r_);
 		}
 
 	private:
@@ -595,6 +611,10 @@ private:
 			execution::set_value(s->dr_, std::move(value));
 		}
 
+		auto get_env() {
+			return execution::get_env(self_->dr_);
+		}
+
 	private:
 		sequence_operation *self_;
 	};
@@ -655,6 +675,10 @@ private:
 			assert(c > 0);
 			if(c == 1)
 				execution::set_value(self_->dr_);
+		}
+
+		auto get_env() {
+			return execution::get_env(self_->dr_);
 		}
 
 	private:
