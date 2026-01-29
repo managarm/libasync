@@ -111,6 +111,24 @@ struct set_value_cpo {
 	}
 };
 
+template<typename T>
+concept get_env_member = requires(T &&obj) {
+	obj.get_env();
+};
+
+struct empty_env { };
+
+struct get_env_cpo {
+	template<typename T>
+	auto operator() (T &&obj) {
+		if constexpr (get_env_member<T>) {
+			return obj.get_env();
+		} else {
+			return empty_env{};
+		}
+	}
+};
+
 } // namespace cpo_types
 
 namespace execution {
@@ -121,6 +139,7 @@ namespace execution {
 	inline cpo_types::start_cpo start;
 	inline cpo_types::start_inline_cpo start_inline;
 	inline cpo_types::set_value_cpo set_value;
+	inline cpo_types::get_env_cpo get_env;
 }
 
 } // namespace async

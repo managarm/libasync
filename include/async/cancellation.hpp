@@ -387,6 +387,10 @@ private:
 				self->complete_();
 		}
 
+		auto get_env() {
+			return execution::get_env(self->dr_);
+		}
+
 		with_cancel_cb_operation *self;
 	};
 	static_assert(Receives<intermediate_receiver, value_type>);
