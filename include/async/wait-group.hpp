@@ -46,20 +46,19 @@ public:
 			>
 		> items;
 
-		while (1) {
-			auto v = ctr_.load(std::memory_order_acquire);
-			if (ctr_.compare_exchange_strong(v, v - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
-				assert(v > 0);
-				if (v != 1) {
-					return;
-				} else {
-					break;
-				}
-			}
+		// We can decrement outside of the lock as long as we do not reach zero.
+		auto v = ctr_.load(std::memory_order_relaxed);
+		while (v > 1) {
+			if (ctr_.compare_exchange_strong(v, v - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+				return;
 		}
+		assert(v > 0);
 
 		{
 			frg::unique_lock lock(mutex_);
+			// Only wake waiters if we reach zero.
+			if (ctr_.fetch_sub(1, std::memory_order_acq_rel) > 1)
+				return;
 			items.splice(items.end(), queue_);
 		}
 
@@ -89,7 +88,8 @@ public:
 			{
 				frg::unique_lock lock(wg_->mutex_);
 
-				if(wg_->ctr_.load(std::memory_order_acquire) > 0) {
+				// Relaxed since non-zero -> zero transitions cannot happen while the mutex is held.
+				if(wg_->ctr_.load(std::memory_order_relaxed) > 0) {
 					if(!cobs_.try_set(ct_)) {
 						cancelled = true;
 					}else{
@@ -108,7 +108,8 @@ public:
 			{
 				frg::unique_lock lock(wg_->mutex_);
 
-				if(wg_->ctr_.load(std::memory_order_acquire) > 0) {
+				// Relaxed since non-zero -> zero transitions cannot happen while the mutex is held.
+				if(wg_->ctr_.load(std::memory_order_relaxed) > 0) {
 					cancelled = true;
 					auto it = wg_->queue_.iterator_to(this);
 					wg_->queue_.erase(it);
