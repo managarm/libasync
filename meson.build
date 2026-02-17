@@ -24,6 +24,7 @@ if get_option('install_headers')
 		'include/async/result.hpp',
 		'include/async/sequenced-event.hpp',
 		'include/async/wait-group.hpp',
+		'include/async/generator.hpp',
 		subdir : 'async/')
 
 	pkgconfig.generate(

@@ -23,6 +23,7 @@ sources = files(
 	'sequenced.cpp',
 	'post-ack.cpp',
 	'with_cancel_cb.cpp',
+	'generator.cpp',
 )
 
 exe = executable('gtests',
