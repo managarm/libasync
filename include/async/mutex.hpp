@@ -362,10 +362,6 @@ namespace detail {
 								// mutex_ protects against concurrent transitions from contention::contended.
 								assert(st.c == contention::contended);
 								self_->waiters_.push_back(this);
-								self_->st_.store(
-									state{.c = contention::contended, .shared_cnt = st.shared_cnt},
-									std::memory_order_relaxed
-								);
 								return;
 							}
 						}
@@ -546,19 +542,26 @@ namespace detail {
 			// Only the owner ever transitions out of state::locked so we must be in state::contended.
 			assert(st.c == contention::contended);
 
+			// We can decrease shared lock count in state::contended state even outside of the mutex,
+			// as long as we do not need to transition out of state::contended.
+			while (st.shared_cnt > 1) {
+				bool success = st_.compare_exchange_weak(
+					st,
+					state{.c = contention::contended, .shared_cnt = st.shared_cnt - 1},
+					std::memory_order_release,
+					std::memory_order_relaxed
+				);
+				if (success)
+					return;
+			}
+			assert(st.shared_cnt == 1);
+
 			node *next;
 			{
 				frg::unique_lock lock(mutex_);
 
-				// In contrast to unlock(), contended shared -> shared transitions do not wake.
-				if (st.shared_cnt > 1) {
-					st_.store(
-						state{.c = contention::contended, .shared_cnt = st.shared_cnt - 1},
-						std::memory_order_release
-					);
-					return;
-				}
-				assert(st.shared_cnt == 1);
+				// Note that the shared count cannot increase in state::contended.
+				// Hence, even after taking the mutex, we are the only owner of the mutex.
 
 				// Otherwise, we would not be in state::contended.
 				assert(!waiters_.empty());
