@@ -275,12 +275,15 @@ public:
 
 				auto n = nd->acks_left.fetch_sub(1, std::memory_order_acq_rel);
 				assert(n >= 1);
-				if(n == 1)
+				if(n == 1) {
 					mech_->queue_.erase(mech_->queue_.iterator_to(nd));
 
-				// Run the completion handler without locks.
-				lock.unlock();
-				nd->complete();
+					// Run the completion handler without locks.
+					lock.unlock();
+					nd->complete();
+				}else{
+					lock.unlock();
+				}
 
 				++poll_seq_;
 				if(retire_seq == poll_seq_) // Avoid re-locking.
@@ -305,7 +308,7 @@ public:
 		void start() {
 			assert(agnt_->mech_);
 
-			auto seq = agnt_->poll_seq_++;
+			auto seq = agnt_->poll_seq_;
 
 			{
 				frg::unique_lock lock(agnt_->mech_->mutex_);
@@ -330,13 +333,17 @@ public:
 				}
 			}
 
+			if(nd)
+				++agnt_->poll_seq_;
 			execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
 		}
 
 	private:
 		void complete() override {
-			if(cobs_.try_reset())
+			if(cobs_.try_reset()) {
+				++agnt_->poll_seq_;
 				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+			}
 		}
 
 		void complete_cancel() {
@@ -350,10 +357,12 @@ public:
 				}
 			}
 
-			if(nd)
+			if(nd) {
+				++agnt_->poll_seq_;
 				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
-			else
+			}else{
 				execution::set_value(receiver_, post_ack_handle<T>{});
+			}
 		}
 
 		post_ack_agent *agnt_;
