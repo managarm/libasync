@@ -275,12 +275,15 @@ public:
 
 				auto n = nd->acks_left.fetch_sub(1, std::memory_order_acq_rel);
 				assert(n >= 1);
-				if(n == 1)
+				if(n == 1) {
 					mech_->queue_.erase(mech_->queue_.iterator_to(nd));
 
-				// Run the completion handler without locks.
-				lock.unlock();
-				nd->complete();
+					// Run the completion handler without locks.
+					lock.unlock();
+					nd->complete();
+				}else{
+					lock.unlock();
+				}
 
 				++poll_seq_;
 				if(retire_seq == poll_seq_) // Avoid re-locking.
