@@ -308,7 +308,7 @@ public:
 		void start() {
 			assert(agnt_->mech_);
 
-			auto seq = agnt_->poll_seq_++;
+			auto seq = agnt_->poll_seq_;
 
 			{
 				frg::unique_lock lock(agnt_->mech_->mutex_);
@@ -333,13 +333,17 @@ public:
 				}
 			}
 
+			if(nd)
+				++agnt_->poll_seq_;
 			execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
 		}
 
 	private:
 		void complete() override {
-			if(cobs_.try_reset())
+			if(cobs_.try_reset()) {
+				++agnt_->poll_seq_;
 				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+			}
 		}
 
 		void complete_cancel() {
@@ -353,10 +357,12 @@ public:
 				}
 			}
 
-			if(nd)
+			if(nd) {
+				++agnt_->poll_seq_;
 				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
-			else
+			}else{
 				execution::set_value(receiver_, post_ack_handle<T>{});
+			}
 		}
 
 		post_ack_agent *agnt_;
