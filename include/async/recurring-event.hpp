@@ -4,7 +4,7 @@
 #include <async/basic.hpp>
 #include <async/cancellation.hpp>
 #include <frg/expected.hpp>
-#include <frg/functional.hpp>
+#include <frg/container_of.hpp>
 #include <frg/list.hpp>
 
 namespace async {
@@ -15,7 +15,7 @@ private:
 		none,
 		submitted,
 		pending,
-		retired
+		cancelled
 	};
 
 	struct node {
@@ -30,6 +30,8 @@ private:
 
 		virtual void complete() = 0;
 
+		bool was_cancelled() const { return st_ == state::cancelled; }
+
 	protected:
 		virtual ~node() = default;
 
@@ -42,7 +44,7 @@ private:
 
 public:
 	void raise() {
-		// Grab all items and mark them as retired while we hold the lock.
+		// Grab all items and mark them as pending while we hold the lock.
 		frg::intrusive_list<
 			node,
 			frg::locate_member<
@@ -69,6 +71,18 @@ public:
 		}
 	}
 
+	bool try_cancel(node *nd) {
+		frg::unique_lock lock(_mutex);
+
+		if(nd->st_ == state::submitted) {
+			nd->st_ = state::cancelled;
+			auto it = queue_.iterator_to(nd);
+			queue_.erase(it);
+			return true;
+		}
+		return false;
+	}
+
 	// ----------------------------------------------------------------------------------
 	// async_wait_if() and its boilerplate.
 	// ----------------------------------------------------------------------------------
@@ -76,70 +90,56 @@ public:
 	template<typename C, typename Receiver>
 	struct wait_if_operation final : private node {
 		wait_if_operation(recurring_event *evt, C cond, cancellation_token ct, Receiver r)
-		: evt_{evt}, cond_{std::move(cond)}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
+		: evt_{evt}, cond_{std::move(cond)}, ct_{std::move(ct)}, r_{std::move(r)} { }
 
 		void start() {
 			assert(st_ == state::none);
 
-			bool retire_condfail = false;
-			bool retire_cancelled = false;
+			bool fast_path = false;
 			{
 				frg::unique_lock lock(evt_->_mutex);
 
 				if(!cond_()) {
 					st_ = state::pending;
-					retire_condfail = true;
-				}else if(!cobs_.try_set(ct_)) {
-					st_ = state::pending;
-					cancelled_ = true;
-					retire_cancelled = true;
+					fast_path = true;
 				}else{
 					st_ = state::submitted;
 					evt_->queue_.push_back(this);
 				}
 			}
 
-			if(retire_condfail) {
-				st_ = state::retired;
+			if(fast_path) {
 				return execution::set_value(r_, maybe_awaited::condition_failed);
-			}else if(retire_cancelled) {
-				st_ = state::retired;
-				return execution::set_value(r_, maybe_cancelled::cancelled);
 			}
+			cr_.listen(ct_);
 		}
 
 	private:
-		void cancel() {
-			{
-				frg::unique_lock lock(evt_->_mutex);
-
-				if(st_ == state::submitted) {
-					st_ = state::pending;
-					cancelled_ = true;
-					auto it = evt_->queue_.iterator_to(this);
-					evt_->queue_.erase(it);
-				}else{
-					assert(st_ == state::pending);
-				}
+		struct try_cancel_fn {
+			bool operator()(auto *cr) {
+				auto self = frg::container_of(cr, &wait_if_operation::cr_);
+				return self->evt_->try_cancel(self);
 			}
-
-			st_ = state::retired;
-			execution::set_value(r_, maybe_cancelled::cancelled);
-		}
+		};
+		struct resume_fn {
+			void operator()(auto *cr) {
+				auto self = frg::container_of(cr, &wait_if_operation::cr_);
+				if(self->was_cancelled())
+					execution::set_value(self->r_, maybe_cancelled::cancelled);
+				else
+					execution::set_value(self->r_, maybe_awaited::awaited);
+			}
+		};
 
 		void complete() override {
-			if(cobs_.try_reset()) {
-				st_ = state::retired;
-				execution::set_value(r_, maybe_awaited::awaited);
-			}
+			cr_.complete();
 		}
 
 		recurring_event *evt_;
 		C cond_;
 		cancellation_token ct_;
 		Receiver r_;
-		cancellation_observer<frg::bound_mem_fn<&wait_if_operation::cancel>> cobs_;
-		bool cancelled_ = false;
+		cancellation_resolver<try_cancel_fn, resume_fn> cr_;
 	};
 
 	template<typename C>

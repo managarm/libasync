@@ -6,7 +6,7 @@
 #include <atomic>
 #include <async/algorithm.hpp>
 #include <async/cancellation.hpp>
-#include <frg/functional.hpp>
+#include <frg/container_of.hpp>
 #include <frg/list.hpp>
 
 namespace async {
@@ -24,12 +24,15 @@ private:
 
 		virtual void complete() = 0;
 
+		bool was_cancelled() const { return cancelled_; }
+
 	protected:
 		virtual ~node() = default;
 
 	private:
 		// Protected by mutex_.
 		frg::default_list_hook<node> _hook;
+		bool cancelled_ = false;
 	};
 
 public:
@@ -70,6 +73,19 @@ public:
 		}
 	}
 
+	bool try_cancel(node *nd) {
+		frg::unique_lock lock(mutex_);
+
+		// Relaxed since non-zero -> zero transitions cannot happen while the mutex is held.
+		if(ctr_.load(std::memory_order_relaxed) > 0) {
+			nd->cancelled_ = true;
+			auto it = queue_.iterator_to(nd);
+			queue_.erase(it);
+			return true;
+		}
+		return false;
+	}
+
 	void add(size_t new_members) {
 		ctr_.fetch_add(new_members, std::memory_order_acq_rel);
 	}
@@ -81,53 +97,48 @@ public:
 	template<typename Receiver>
 	struct wait_operation final : private node {
 		wait_operation(wait_group *wg, cancellation_token ct, Receiver r)
-		: wg_{wg}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
+		: wg_{wg}, ct_{std::move(ct)}, r_{std::move(r)} { }
 
 		void start() {
-			bool cancelled = false;
+			bool fast_path = false;
 			{
 				frg::unique_lock lock(wg_->mutex_);
 
 				// Relaxed since non-zero -> zero transitions cannot happen while the mutex is held.
 				if(wg_->ctr_.load(std::memory_order_relaxed) > 0) {
-					if(!cobs_.try_set(ct_)) {
-						cancelled = true;
-					}else{
-						wg_->queue_.push_back(this);
-						return;
-					}
+					wg_->queue_.push_back(this);
+				}else{
+					fast_path = true;
 				}
 			}
 
-			return execution::set_value(r_, !cancelled);
+			if(fast_path)
+				return execution::set_value(r_, true);
+			cr_.listen(ct_);
 		}
 
 	private:
-		void cancel() {
-			bool cancelled = false;
-			{
-				frg::unique_lock lock(wg_->mutex_);
-
-				// Relaxed since non-zero -> zero transitions cannot happen while the mutex is held.
-				if(wg_->ctr_.load(std::memory_order_relaxed) > 0) {
-					cancelled = true;
-					auto it = wg_->queue_.iterator_to(this);
-					wg_->queue_.erase(it);
-				}
+		struct try_cancel_fn {
+			bool operator()(auto *cr) {
+				auto self = frg::container_of(cr, &wait_operation::cr_);
+				return self->wg_->try_cancel(self);
 			}
-
-			execution::set_value(r_, !cancelled);
-		}
+		};
+		struct resume_fn {
+			void operator()(auto *cr) {
+				auto self = frg::container_of(cr, &wait_operation::cr_);
+				execution::set_value(self->r_, !self->was_cancelled());
+			}
+		};
 
 		void complete() override {
-			if(cobs_.try_reset())
-				execution::set_value(r_, true);
+			cr_.complete();
 		}
 
 		wait_group *wg_;
 		cancellation_token ct_;
 		Receiver r_;
-		cancellation_observer<frg::bound_mem_fn<&wait_operation::cancel>> cobs_;
+		cancellation_resolver<try_cancel_fn, resume_fn> cr_;
 	};
 
 	struct [[nodiscard]] wait_sender {
