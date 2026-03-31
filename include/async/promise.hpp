@@ -8,7 +8,7 @@
 #include <async/cancellation.hpp>
 #include <async/algorithm.hpp>
 
-#include <frg/functional.hpp>
+#include <frg/container_of.hpp>
 
 namespace async {
 
@@ -49,11 +49,14 @@ namespace detail {
 
 			virtual void complete() = 0;
 
+			bool was_cancelled() const { return cancelled_; }
+
 		protected:
 			virtual ~node() = default;
 
 		private:
 			frg::default_list_hook<node> hook_;
+			bool cancelled_ = false;
 		};
 
 		frg::intrusive_list<
@@ -64,6 +67,18 @@ namespace detail {
 				&node::hook_
 			>
 		> queue_;
+
+		bool try_cancel(node *nd) {
+			frg::unique_lock lock{mutex_};
+
+			if (!has_value()) {
+				nd->cancelled_ = true;
+				auto it = queue_.iterator_to(nd);
+				queue_.erase(it);
+				return true;
+			}
+			return false;
+		}
 
 		void wake() {
 			assert(has_value_);
@@ -233,69 +248,58 @@ public:
 	template<typename Receiver>
 	struct get_operation final : private detail::promise_state_base::node {
 		get_operation(detail::promise_state<T> *state, cancellation_token ct, Receiver r)
-		: state_{state}, ct_{std::move(ct)}, r_{std::move(r)}, cobs_{this} { }
+		: state_{state}, ct_{std::move(ct)}, r_{std::move(r)} { }
 
 		void start() {
-			bool cancelled = false;
+			bool fast_path = false;
 			{
 				frg::unique_lock lock{state_->mutex_};
 
 				if (!state_->has_value()) {
-					if (!cobs_.try_set(ct_)) {
-						cancelled = true;
-					} else {
-						state_->queue_.push_back(this);
-						return;
-					}
+					state_->queue_.push_back(this);
+				}else{
+					fast_path = true;
 				}
 			}
 
-			if constexpr (std::is_same_v<T, void>)
-				return execution::set_value(r_, !cancelled);
-			else {
-				if (cancelled)
-					return execution::set_value(r_, frg::optional<T *>{frg::null_opt});
+			if(fast_path) {
+				if constexpr (std::is_same_v<T, void>)
+					return execution::set_value(r_, true);
 				else
 					return execution::set_value(r_, frg::optional<T *>{&state_->get()});
 			}
+			cr_.listen(ct_);
 		}
 
 	private:
-		void cancel() {
-			bool cancelled = false;
-			{
-				frg::unique_lock lock{state_->mutex_};
-
-				if (!state_->has_value()) {
-					cancelled = true;
-					auto it = state_->queue_.iterator_to(this);
-					state_->queue_.erase(it);
+		struct try_cancel_fn {
+			bool operator()(auto *cr) {
+				auto self = frg::container_of(cr, &get_operation::cr_);
+				return self->state_->try_cancel(self);
+			}
+		};
+		struct resume_fn {
+			void operator()(auto *cr) {
+				auto self = frg::container_of(cr, &get_operation::cr_);
+				if constexpr (std::is_same_v<T, void>) {
+					execution::set_value(self->r_, !self->was_cancelled());
+				} else {
+					if (self->was_cancelled())
+						execution::set_value(self->r_, frg::optional<T *>{frg::null_opt});
+					else
+						execution::set_value(self->r_, frg::optional<T *>{&self->state_->get()});
 				}
 			}
-
-			if constexpr (std::is_same_v<T, void>)
-				execution::set_value(r_, !cancelled);
-			else {
-				if (cancelled)
-					execution::set_value(r_, frg::optional<T *>{frg::null_opt});
-				else
-					execution::set_value(r_, frg::optional<T *>{&state_->get()});
-			}
-		}
+		};
 
 		void complete() override {
-			if (cobs_.try_reset()) {
-				if constexpr (std::is_same_v<T, void>)
-					execution::set_value(r_, true);
-				else
-					execution::set_value(r_, frg::optional<T *>{&state_->get()});
-			}
+			cr_.complete();
 		}
 
 		detail::promise_state<T> *state_;
 		cancellation_token ct_;
 		Receiver r_;
-		cancellation_observer<frg::bound_mem_fn<&get_operation::cancel>> cobs_;
+		cancellation_resolver<try_cancel_fn, resume_fn> cr_;
 	};
 
 public:

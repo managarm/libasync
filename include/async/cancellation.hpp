@@ -30,6 +30,9 @@ struct cancellation_event {
 	template<typename F>
 	friend struct cancellation_observer;
 
+	template<typename TryCancel, typename Cont>
+	friend struct cancellation_resolver;
+
 	cancellation_event()
 	: _was_requested{false} { };
 
@@ -69,6 +72,9 @@ struct cancellation_token {
 
 	template<typename F>
 	friend struct cancellation_observer;
+
+	template<typename TryCancel, typename Cont>
+	friend struct cancellation_resolver;
 
 	cancellation_token()
 	: _event{nullptr} { }
@@ -200,6 +206,123 @@ private:
 	F _functor;
 };
 
+// Helper class to implement cancellation for low-level data structures.
+// Both TryCancel and Resume are function objects that take a cancellation_resolver *.
+// Cancellation always involves a potential race between the cancellation code path
+// and the regular completion code path. This class helps to resolve this race.
+//
+// Usage:
+// * Initialization: users do their internal book keeping (e.g., by adding nodes to their
+//   data structures or similar) and then call listen() with a cancellation token.
+// * Regular completion: on regular completion, users call complete().
+//   This tries to unregister the cancellation_resolver from the cancellation event.
+//   If this succeeds, tryCancel() will never be called.
+//   If it fails, tryCancel() either was already called or it is called concurrently.
+// * On cancellation, the tryCancel() callback is called.
+//   If tryCancel() returns true, complete() will never be called.
+//   If it fails, complete() either was already called or it is called concurrently.
+// * resume() is called once all of the following hold:
+//   - listen() is done.
+//   - Either complete() is done or it will never be called.
+//   - Either tryCancel() is done or it will never be called.
+template<typename TryCancel, typename Resume>
+struct cancellation_resolver final : private abstract_cancellation_callback {
+	cancellation_resolver(TryCancel tryCancel = TryCancel{}, Resume resume = Resume{})
+	: tryCancel_{std::move(tryCancel)}, resume_{std::move(resume)} { }
+
+	cancellation_resolver(const cancellation_resolver &) = delete;
+
+	// TODO: we could do some sanity checking of the state in the destructor.
+	~cancellation_resolver() = default;
+
+	cancellation_resolver &operator= (const cancellation_resolver &) = delete;
+
+	void listen(cancellation_token ct) {
+		event_ = ct._event;
+		if (!event_) {
+			transition_(done_listen | done_cancellation_path);
+			return;
+		}
+
+		// Try to register a callback for cancellation.
+		// This will succeed unless the cancellation event is already triggered.
+		bool registered = false;
+		{
+			frg::unique_lock guard{event_->_mutex};
+			if(!event_->_was_requested) {
+				event_->_cbs.push_back(this);
+				registered = true;
+			}
+		}
+		if (registered) {
+			transition_(done_listen);
+			return;
+		}
+
+		// If we get here, the cancellation event was already triggered.
+		// Do the equivalent of call(), except that we also set the done_listen bit.
+		if (tryCancel_(this)) {
+			transition_(done_listen | done_completion_path | done_cancellation_path);
+			return;
+		}
+		transition_(done_listen | done_cancellation_path);
+	}
+
+	void complete() {
+		transition_(done_completion_path);
+	}
+
+private:
+	void call() override {
+		if (tryCancel_(this)) {
+			transition_(done_completion_path | done_cancellation_path);
+			return;
+		}
+		transition_(done_cancellation_path);
+	}
+
+	void transition_(unsigned int new_bits) {
+		assert(!(new_bits & ~(done_listen | done_completion_path | done_cancellation_path)));
+
+		auto old_st = state_.fetch_or(new_bits, std::memory_order_acq_rel);
+		assert(!(old_st & new_bits));
+
+		// Both resume() and cancellation event unregistration only happen once both
+		// listen() and the completion code path are done.
+		auto st = old_st | new_bits;
+		if (!(st & done_listen) || !(st & done_completion_path))
+			return;
+
+		if (!(st & done_cancellation_path)) {
+			// Try to unregister from the cancellation event once both listen() and complete() were called.
+			// Note that we enter this code path at most once since done_cancellation_path is the only missing
+			// bit in state_ and the next call to transition_() will necessarily set it.
+			assert(event_);
+
+			frg::unique_lock guard{event_->_mutex};
+			if (event_->_was_requested)
+				return;
+			auto it = event_->_cbs.iterator_to(this);
+			event_->_cbs.erase(it);
+		}
+
+		// Call resume() when all code paths are done. This can only happen once.
+		resume_(this);
+	}
+
+	// Set in state_ when listen() is done.
+	static constexpr unsigned int done_listen = 1u << 0;
+	// Set in state_ when complete() is done or when we know that it will never be called.
+	static constexpr unsigned int done_completion_path = 1u << 1;
+	// Set in state_ when tryCancel() is done or when we know that it will never be called.
+	static constexpr unsigned int done_cancellation_path = 1u << 2;
+
+	cancellation_event *event_{nullptr};
+	std::atomic<unsigned int> state_{0};
+	[[no_unique_address]] TryCancel tryCancel_;
+	[[no_unique_address]] Resume resume_;
+};
+
 inline void cancellation_event::cancel() {
 	frg::intrusive_list<
 		abstract_cancellation_callback,
@@ -236,6 +359,7 @@ using detail::cancellation_event;
 using detail::cancellation_token;
 using detail::cancellation_callback;
 using detail::cancellation_observer;
+using detail::cancellation_resolver;
 
 namespace {
 

@@ -3,7 +3,7 @@
 #include <algorithm>
 
 #include <async/cancellation.hpp>
-#include <frg/functional.hpp>
+#include <frg/container_of.hpp>
 #include <frg/list.hpp>
 
 namespace async {
@@ -53,6 +53,18 @@ private:
 	protected:
 		~poll_node() = default;
 	};
+
+	bool try_cancel(poll_node *pnd) {
+		frg::unique_lock lock(mutex_);
+
+		if(!pnd->pending) {
+			assert(!pnd->nd);
+			pnd->pending = true;
+			poll_queue_.erase(poll_queue_.iterator_to(pnd));
+			return true;
+		}
+		return false;
+	}
 
 public:
 	template<typename R>
@@ -310,6 +322,7 @@ public:
 
 			auto seq = agnt_->poll_seq_;
 
+			bool fast_path = false;
 			{
 				frg::unique_lock lock(agnt_->mech_->mutex_);
 				assert(!nd);
@@ -323,52 +336,44 @@ public:
 					assert(it != agnt_->mech_->queue_.end());
 					pending = true;
 					nd = *it;
-				}else if(!cobs_.try_set(ct_)) {
-					// Fast path: cancellation.
-					pending = true;
+					fast_path = true;
 				}else{
 					// Slow path.
 					agnt_->mech_->poll_queue_.push_back(this);
-					return;
 				}
 			}
 
-			if(nd)
+			if(fast_path) {
 				++agnt_->poll_seq_;
-			execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+				return execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
+			}
+			cr_.listen(ct_);
 		}
 
 	private:
+		struct try_cancel_fn {
+			bool operator()(auto *cr) {
+				auto self = frg::container_of(cr, &poll_operation::cr_);
+				return self->agnt_->mech_->try_cancel(self);
+			}
+		};
+		struct resume_fn {
+			void operator()(auto *cr) {
+				auto self = frg::container_of(cr, &poll_operation::cr_);
+				if(self->nd)
+					++self->agnt_->poll_seq_;
+				execution::set_value(self->receiver_, post_ack_handle<T>{self->agnt_->mech_, self->nd});
+			}
+		};
+
 		void complete() override {
-			if(cobs_.try_reset()) {
-				++agnt_->poll_seq_;
-				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
-			}
-		}
-
-		void complete_cancel() {
-			{
-				frg::unique_lock lock(agnt_->mech_->mutex_);
-
-				if(!pending) {
-					assert(!nd);
-					pending = true;
-					agnt_->mech_->poll_queue_.erase(agnt_->mech_->poll_queue_.iterator_to(this));
-				}
-			}
-
-			if(nd) {
-				++agnt_->poll_seq_;
-				execution::set_value(receiver_, post_ack_handle<T>{agnt_->mech_, nd});
-			}else{
-				execution::set_value(receiver_, post_ack_handle<T>{});
-			}
+			cr_.complete();
 		}
 
 		post_ack_agent *agnt_;
 		cancellation_token ct_;
 		R receiver_;
-		cancellation_observer<frg::bound_mem_fn<&poll_operation::complete_cancel>> cobs_{this};
+		cancellation_resolver<try_cancel_fn, resume_fn> cr_;
 	};
 
 	struct [[nodiscard]] poll_sender {

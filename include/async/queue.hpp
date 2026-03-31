@@ -2,8 +2,8 @@
 
 #include <async/basic.hpp>
 #include <async/cancellation.hpp>
+#include <frg/container_of.hpp>
 #include <frg/list.hpp>
-#include <frg/functional.hpp>
 #include <frg/optional.hpp>
 
 namespace async {
@@ -21,16 +21,25 @@ private:
 		virtual ~sink() = default;
 
 	public:
-		virtual void cancel() = 0;
 		virtual void complete() = 0;
 
 	protected:
-		cancellation_observer<frg::bound_mem_fn<&sink::cancel>> cobs{this};
 		frg::optional<T> value;
 
 	private:
 		frg::default_list_hook<sink> hook_;
 	};
+
+	bool try_cancel(sink *sp) {
+		frg::unique_lock lock{mutex_};
+
+		if(!sp->value) {
+			auto it = sinks_.iterator_to(sp);
+			sinks_.erase(it);
+			return true;
+		}
+		return false;
+	}
 
 public:
 	void put(T item) {
@@ -39,7 +48,7 @@ public:
 
 	template<typename... Ts>
 	void emplace(Ts&&... arg) {
-		sink *retire_sp = nullptr;
+		sink *complete_sp = nullptr;
 		{
 			frg::unique_lock lock{mutex_};
 
@@ -47,15 +56,14 @@ public:
 				assert(buffer_.empty());
 				auto sp = sinks_.pop_front();
 				sp->value.emplace(std::forward<Ts>(arg)...);
-				if(sp->cobs.try_reset())
-					retire_sp = sp;
+				complete_sp = sp;
 			}else{
 				buffer_.emplace_back(std::forward<Ts>(arg)...);
 			}
 		}
 
-		if(retire_sp)
-			retire_sp->complete();
+		if(complete_sp)
+			complete_sp->complete();
 	}
 
 	// ----------------------------------------------------------------------------------
@@ -68,7 +76,7 @@ public:
 		: q_{q}, ct_{std::move(ct)}, r_{std::move(r)} { }
 
 		void start() {
-			bool retire = false;
+			bool fast_path = false;
 			{
 				frg::unique_lock lock{q_->mutex_};
 
@@ -76,45 +84,41 @@ public:
 					assert(q_->sinks_.empty());
 					value = std::move(q_->buffer_.front());
 					q_->buffer_.pop_front();
-					retire = true;
+					fast_path = true;
 				}else{
-					if(!cobs.try_set(ct_)) {
-						retire = true;
-					}else{
-						q_->sinks_.push_back(this);
-					}
+					q_->sinks_.push_back(this);
 				}
 			}
 
-			if(retire)
+			if(fast_path)
 				return execution::set_value(r_, std::move(value));
+			cr_.listen(ct_);
 		}
 
 	private:
-		using sink::cobs;
 		using sink::value;
 
-		void cancel() override {
-			{
-				frg::unique_lock lock{q_->mutex_};
-
-				// We either have a value, or we are not part of the list anymore.
-				if(!value) {
-					auto it = q_->sinks_.iterator_to(this);
-					q_->sinks_.erase(it);
-				}
+		struct try_cancel_fn {
+			bool operator()(auto *cr) {
+				auto self = frg::container_of(cr, &get_operation::cr_);
+				return self->q_->try_cancel(self);
 			}
-
-			execution::set_value(r_, std::move(value));
-		}
+		};
+		struct resume_fn {
+			void operator()(auto *cr) {
+				auto self = frg::container_of(cr, &get_operation::cr_);
+				execution::set_value(self->r_, std::move(self->value));
+			}
+		};
 
 		void complete() override {
-			execution::set_value(r_, std::move(value));
+			cr_.complete();
 		}
 
 		queue *q_;
 		cancellation_token ct_;
 		Receiver r_;
+		cancellation_resolver<try_cancel_fn, resume_fn> cr_;
 	};
 
 	struct get_sender {

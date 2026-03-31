@@ -4,6 +4,7 @@
 - [Contributing](contributing.md)
 - [Senders, receivers, and operations](sender-receiver.md)
   - [Writing your own sender and operation](your-own-sender.md)
+  - [Writing low-level data structures](low-level-data-structures.md)
 - [IO services](io-service.md)
 - [API reference](headers.md)
   - [async/algorithm.hpp](headers/algorithm.md)
