@@ -109,6 +109,11 @@ namespace detail {
 
 		// ------------------------------------------------------------------------------
 
+		// Returns true if try_lock() would have succeeded. This is useful for TTAS.
+		bool test() {
+			return st_.load(std::memory_order_relaxed) == state::none;
+		}
+
 		bool try_lock() {
 			auto st = state::none;
 			return st_.compare_exchange_strong(
