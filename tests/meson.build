@@ -24,6 +24,7 @@ sources = files(
 	'post-ack.cpp',
 	'with_cancel_cb.cpp',
 	'generator.cpp',
+	'run-queue.cpp',
 )
 
 exe = executable('gtests',
