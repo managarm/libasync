@@ -5,28 +5,13 @@
 #include <type_traits>
 
 #include <async/execution.hpp>
+#include <async/platform-support.hpp>
+#include <async/run-queue.hpp>
 #include <frg/list.hpp>
 #include <frg/optional.hpp>
 #include <frg/mutex.hpp>
 #include <frg/eternal.hpp>
 #include <frg/std_compat.hpp>
-
-#ifndef LIBASYNC_CUSTOM_PLATFORM
-#include <mutex>
-#include <iostream>
-#include <cassert>
-
-namespace async::platform {
-	using mutex = std::mutex;
-
-	[[noreturn]] inline void panic(const char *str) {
-		std::cerr << str << std::endl;
-		std::terminate();
-	}
-} // namespace async::platform
-#else
-#include <async/platform.hpp>
-#endif
 
 #if __has_include(<coroutine>) && !defined(LIBASYNC_FORCE_USE_EXPERIMENTAL)
 #include <coroutine>
@@ -287,68 +272,6 @@ public:
 private:
 	R (*_function)(storage, Args...);
 	frg::aligned_storage<sizeof(void *), alignof(void *)> _object;
-};
-
-// ----------------------------------------------------------------------------
-// run_queue implementation.
-// ----------------------------------------------------------------------------
-
-struct run_queue;
-
-run_queue *get_current_queue();
-
-struct run_queue_item {
-	friend struct run_queue;
-	friend struct current_queue_token;
-	friend struct run_queue_token;
-
-	run_queue_item() = default;
-
-	run_queue_item(const run_queue_item &) = delete;
-
-	run_queue_item &operator= (const run_queue_item &) = delete;
-
-	void arm(callback<void()> cb) {
-		assert(!_cb && "run_queue_item is already armed");
-		assert(cb && "cannot arm run_queue_item with a null callback");
-		_cb = cb;
-	}
-
-private:
-	callback<void()> _cb;
-	frg::default_list_hook<run_queue_item> _hook;
-};
-
-struct run_queue_token {
-	run_queue_token(run_queue *rq)
-	: rq_{rq} { }
-
-	void run_iteration();
-	bool is_drained();
-
-private:
-	run_queue *rq_;
-};
-
-struct run_queue {
-	friend struct current_queue_token;
-	friend struct run_queue_token;
-
-	run_queue_token run_token() {
-		return {this};
-	}
-
-	void post(run_queue_item *node);
-
-private:
-	frg::intrusive_list<
-		run_queue_item,
-		frg::locate_member<
-			run_queue_item,
-			frg::default_list_hook<run_queue_item>,
-			&run_queue_item::_hook
-		>
-	> _run_list;
 };
 
 // ----------------------------------------------------------------------------
