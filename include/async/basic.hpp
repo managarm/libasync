@@ -373,6 +373,15 @@ requires std::same_as<typename Sender::value_type, void>
 void run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
+		run_queue *rq = nullptr;
+	};
+
+	struct env {
+		run_queue *get_run_queue() {
+			return stp_->rq;
+		}
+
+		state *stp_;
 	};
 
 	struct receiver {
@@ -383,11 +392,17 @@ void run(Sender s, IoService ios) {
 			stp_->done = true;
 		}
 
+		auto get_env() {
+			return env{stp_};
+		}
+
 	private:
 		state *stp_;
 	};
 
 	state st;
+	if constexpr (has_get_run_queue<IoService>)
+		st.rq = ios.get_run_queue();
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
 	execution::start(operation);
@@ -402,7 +417,16 @@ requires (!std::same_as<typename Sender::value_type, void>)
 typename Sender::value_type run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
+		run_queue *rq = nullptr;
 		frg::optional<typename Sender::value_type> value;
+	};
+
+	struct env {
+		run_queue *get_run_queue() {
+			return stp_->rq;
+		}
+
+		state *stp_;
 	};
 
 	struct receiver {
@@ -414,11 +438,17 @@ typename Sender::value_type run(Sender s, IoService ios) {
 			stp_->done = true;
 		}
 
+		auto get_env() {
+			return env{stp_};
+		}
+
 	private:
 		state *stp_;
 	};
 
 	state st;
+	if constexpr (has_get_run_queue<IoService>)
+		st.rq = ios.get_run_queue();
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
 	execution::start(operation);
@@ -499,7 +529,7 @@ struct detached {
 		}
 
 	private:
-		run_queue *rq_ = get_current_queue();
+		run_queue *rq_ = get_default_queue();
 #endif // LIBASYNC_CUSTOM_PLATFORM
 	};
 };
@@ -520,6 +550,18 @@ namespace detach_details_ {
 			finalize(cb_);
 		}
 
+		struct env {
+			run_queue *get_run_queue() {
+				return rq_;
+			}
+
+			run_queue *rq_;
+		};
+
+		auto get_env() {
+			return env{cb_->rq};
+		}
+
 	private:
 		control_block<Allocator, S, Cont> *cb_;
 	};
@@ -535,23 +577,30 @@ namespace detach_details_ {
 			continuation();
 		}
 
-		control_block(Allocator allocator, S sender, Cont continuation)
-		: allocator{std::move(allocator)},
+		control_block(Allocator allocator, run_queue *rq, S sender, Cont continuation)
+		: allocator{std::move(allocator)}, rq{rq},
 				operation{execution::connect(
 						std::move(sender), final_receiver<Allocator, S, Cont>{this})},
 				continuation{std::move(continuation)} { }
 
 		Allocator allocator;
+		run_queue *rq;
 		execution::operation_t<S, final_receiver<Allocator, S, Cont>> operation;
 		Cont continuation;
 	};
 }
 
 template<typename Allocator, typename S, typename Cont>
-void detach_with_allocator(Allocator allocator, S sender, Cont continuation) {
+void detach_with_allocator_on(run_queue *rq, Allocator allocator, S sender, Cont continuation) {
 	auto p = frg::construct<detach_details_::control_block<Allocator, S, Cont>>(allocator,
-			allocator, std::move(sender), std::move(continuation));
+			allocator, rq, std::move(sender), std::move(continuation));
 	execution::start_inline(p->operation);
+}
+
+template<typename Allocator, typename S, typename Cont>
+void detach_with_allocator(Allocator allocator, S sender, Cont continuation) {
+	detach_with_allocator_on<Allocator, S, Cont>(get_default_queue(), std::move(allocator),
+			std::move(sender), std::move(continuation));
 }
 
 template<typename Allocator, typename S>
@@ -567,6 +616,17 @@ void detach(S sender) {
 template<Sender S, typename Cont>
 void detach(S sender, Cont continuation) {
 	return detach_with_allocator(frg::stl_allocator{}, std::move(sender), std::move(continuation));
+}
+
+template<Sender S>
+void detach_on(run_queue *rq, S sender) {
+	return detach_with_allocator_on(rq, frg::stl_allocator{}, std::move(sender), [] { });
+}
+
+template<Sender S, typename Cont>
+void detach_on(run_queue *rq, S sender, Cont continuation) {
+	return detach_with_allocator_on(rq, frg::stl_allocator{}, std::move(sender),
+			std::move(continuation));
 }
 
 namespace spawn_details_ {
@@ -587,6 +647,18 @@ namespace spawn_details_ {
 			finalize(cb_);
 		}
 
+		struct env {
+			run_queue *get_run_queue() {
+				return rq_;
+			}
+
+			run_queue *rq_;
+		};
+
+		auto get_env() {
+			return env{cb_->rq};
+		}
+
 	private:
 		control_block<Allocator, S, R> *cb_;
 	};
@@ -600,23 +672,36 @@ namespace spawn_details_ {
 			frg::destruct(allocator, cb);
 		}
 
-		control_block(Allocator allocator, S sender, R dr)
-		: allocator{std::move(allocator)},
+		control_block(Allocator allocator, run_queue *rq, S sender, R dr)
+		: allocator{std::move(allocator)}, rq{rq},
 				operation{execution::connect(
 						std::move(sender), final_receiver<Allocator, S, R>{this})},
 				dr{std::move(dr)} { }
 
 		Allocator allocator;
+		run_queue *rq;
 		execution::operation_t<S, final_receiver<Allocator, S, R>> operation;
 		R dr; // Downstream receiver.
 	};
 }
 
 template<typename Allocator, typename S, typename R>
-void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
+void spawn_with_allocator_on(run_queue *rq, Allocator allocator, S sender, R receiver) {
 	auto p = frg::construct<spawn_details_::control_block<Allocator, S, R>>(allocator,
-			allocator, std::move(sender), std::move(receiver));
+			allocator, rq, std::move(sender), std::move(receiver));
 	execution::start_inline(p->operation);
+}
+
+template<typename Allocator, typename S, typename R>
+void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
+	spawn_with_allocator_on<Allocator, S, R>(get_default_queue(), std::move(allocator),
+			std::move(sender), std::move(receiver));
+}
+
+template<Sender S, typename R>
+void spawn_on(run_queue *rq, S sender, R receiver) {
+	return spawn_with_allocator_on(rq, frg::stl_allocator{}, std::move(sender),
+			std::move(receiver));
 }
 
 } // namespace async
