@@ -274,6 +274,82 @@ private:
 	frg::aligned_storage<sizeof(void *), alignof(void *)> _object;
 };
 
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+
+// ----------------------------------------------------------------------------
+// Queue-affine awaiting of senders.
+// ----------------------------------------------------------------------------
+
+// Awaiter that resumes the coroutine on its run queue instead of resuming it inline from set_value().
+template<Sender S>
+struct queue_affine_awaiter : run_queue_item {
+	struct env {
+		run_queue *get_run_queue() {
+			return aw->rq_;
+		}
+
+		queue_affine_awaiter *aw;
+	};
+
+	struct receiver {
+		template<typename... Args>
+		void set_value(Args &&... args) {
+			aw->value_.emplace(std::forward<Args>(args)...);
+			if(aw->rq_) {
+				aw->setup([] (run_queue_item *base) {
+					auto aw = static_cast<queue_affine_awaiter *>(base);
+					aw->h_.resume();
+				});
+				aw->rq_->post(aw);
+			}else{
+				// If the coroutine has no run queue, resume inline.
+				aw->h_.resume();
+			}
+		}
+
+		auto get_env() {
+			return env{.aw = aw};
+		}
+
+		queue_affine_awaiter *aw;
+	};
+
+	queue_affine_awaiter(S s, run_queue *rq)
+	: op_{execution::connect(std::move(s), receiver{this})}, rq_{rq} { }
+
+	bool await_ready() {
+		return false;
+	}
+
+	void await_suspend(corons::coroutine_handle<> h) {
+		h_ = h;
+		execution::start(op_);
+	}
+
+	typename S::value_type await_resume() {
+		assert(value_);
+		if constexpr (!std::is_same_v<typename S::value_type, void>)
+			return std::move(*value_);
+	}
+
+private:
+	struct empty { };
+
+	execution::operation_t<S, receiver> op_;
+	run_queue *rq_;
+	corons::coroutine_handle<> h_;
+
+	std::optional<
+		std::conditional_t<
+			std::is_same_v<typename S::value_type, void>,
+			empty,
+			typename S::value_type
+		>
+	> value_;
+};
+
+#endif // LIBASYNC_CUSTOM_PLATFORM
+
 // ----------------------------------------------------------------------------
 // Top-level execution functions.
 // ----------------------------------------------------------------------------
@@ -408,6 +484,23 @@ struct detached {
 		void unhandled_exception() {
 			platform::panic("libasync: Unhandled exception in coroutine");
 		}
+
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+		template<typename S>
+		requires Sender<std::remove_cvref_t<S>>
+		auto await_transform(S &&s) {
+			return queue_affine_awaiter<std::remove_cvref_t<S>>{std::forward<S>(s), rq_};
+		}
+
+		template<typename A>
+		requires (!Sender<std::remove_cvref_t<A>>)
+		decltype(auto) await_transform(A &&a) {
+			return std::forward<A>(a);
+		}
+
+	private:
+		run_queue *rq_ = get_current_queue();
+#endif // LIBASYNC_CUSTOM_PLATFORM
 	};
 };
 

@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <async/basic.hpp>
+#include <async/run-queue.hpp>
 
 namespace async {
 
@@ -87,6 +88,20 @@ struct result {
 			cont_->emplace_value(std::forward<X>(value));
 		}
 
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+		template<typename S>
+		requires Sender<std::remove_cvref_t<S>>
+		auto await_transform(S &&s) {
+			return queue_affine_awaiter<std::remove_cvref_t<S>>{std::forward<S>(s), rq_};
+		}
+
+		template<typename A>
+		requires (!Sender<std::remove_cvref_t<A>>)
+		decltype(auto) await_transform(A &&a) {
+			return std::forward<A>(a);
+		}
+#endif // LIBASYNC_CUSTOM_PLATFORM
+
 		auto initial_suspend() {
 			struct awaiter {
 				awaiter(promise_type *promise)
@@ -142,6 +157,7 @@ struct result {
 	private:
 		result_continuation<T> *cont_ = nullptr;
 		std::atomic<coroutine_cfp> cfp_{coroutine_cfp::indeterminate};
+		run_queue *rq_ = nullptr;
 	};
 
 	result()
@@ -195,6 +211,20 @@ struct result<void> {
 		void return_void() {
 			// Do nothing.
 		}
+
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+		template<typename S>
+		requires Sender<std::remove_cvref_t<S>>
+		auto await_transform(S &&s) {
+			return queue_affine_awaiter<std::remove_cvref_t<S>>{std::forward<S>(s), rq_};
+		}
+
+		template<typename A>
+		requires (!Sender<std::remove_cvref_t<A>>)
+		decltype(auto) await_transform(A &&a) {
+			return std::forward<A>(a);
+		}
+#endif // LIBASYNC_CUSTOM_PLATFORM
 
 		auto initial_suspend() {
 			struct awaiter {
@@ -251,6 +281,7 @@ struct result<void> {
 	private:
 		result_continuation<void> *cont_ = nullptr;
 		std::atomic<coroutine_cfp> cfp_{coroutine_cfp::indeterminate};
+		run_queue *rq_ = nullptr;
 	};
 
 	result()
@@ -293,6 +324,7 @@ struct result_operation final : private result_continuation<T> {
 		auto h = s_.h_;
 		auto promise = &h.promise();
 		promise->cont_ = this;
+		promise->rq_ = run_queue_from_env(execution::get_env(receiver_));
 		h.resume();
 		auto cfp = promise->cfp_.exchange(coroutine_cfp::past_start, std::memory_order_relaxed);
 		if(cfp == coroutine_cfp::past_suspend) {
@@ -328,6 +360,7 @@ struct result_operation<void, R> final : private result_continuation<void> {
 		auto h = s_.h_;
 		auto promise = &h.promise();
 		promise->cont_ = this;
+		promise->rq_ = run_queue_from_env(execution::get_env(receiver_));
 		h.resume();
 		auto cfp = promise->cfp_.exchange(coroutine_cfp::past_start, std::memory_order_relaxed);
 		if(cfp == coroutine_cfp::past_suspend) {
