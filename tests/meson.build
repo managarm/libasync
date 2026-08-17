@@ -16,6 +16,7 @@ sources = files(
 	'basic.cpp',
 	'queue.cpp',
 	'mutex.cpp',
+	'counting-semaphore.cpp',
 	'race.cpp',
 	'algorithm.cpp',
 	'oneshot.cpp',
