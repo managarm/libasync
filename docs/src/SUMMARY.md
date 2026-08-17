@@ -44,6 +44,7 @@
   - [async/mutex.hpp](headers/mutex.md)
     - [mutex](headers/mutex/mutex.md)
     - [shared\_mutex](headers/mutex/shared_mutex.md)
+  - [async/counting-semaphore.hpp](headers/counting-semaphore.md)
   - [async/promise.hpp](headers/promise.md)
     - [promise](headers/promise/promise.md)
     - [future](headers/promise/future.md)
