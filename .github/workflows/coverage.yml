@@ -8,25 +8,21 @@ permissions:
 
 jobs:
   tests:
-    # XXX(arsen): stop doing this when GHAs ubuntu-latest is 22.04
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Get dependencies
         run: |
-          export 
           sudo DEBIAN_FRONTEND=noninteractive apt-get update
           sudo DEBIAN_FRONTEND=noninteractive \
-              apt-get -y install python3-dev libxml2-dev libxslt1-dev \
-                             cmake libyaml-dev libclang-dev llvm-dev \
-                             libglib2.0-dev libjson-glib-dev flex \
-                             ninja-build build-essential python3-pip \
+              apt-get -y install ninja-build build-essential \
                              git libgtest-dev
-          sudo pip3 install -U meson hotdoc gcovr
+          pipx install meson
+          pipx install gcovr
       - name: Build
         run: |
           git clone --depth=1 https://github.com/managarm/frigg.git subprojects/frigg
-          meson --buildtype=debug -Dbuild_tests=true -Db_coverage=true build
+          meson setup --buildtype=debug -Dbuild_tests=true -Db_coverage=true build
           cd build
           ninja test
           ninja coverage-html
@@ -34,7 +30,7 @@ jobs:
           ninja coverage-text
           ninja coverage-sonarqube
       - name: Upload coverage reports as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverages
           path: |
