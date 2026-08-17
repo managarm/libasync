@@ -14,6 +14,7 @@ if get_option('install_headers')
 		'include/async/barrier.hpp',
 		'include/async/basic.hpp',
 		'include/async/cancellation.hpp',
+		'include/async/counting-semaphore.hpp',
 		'include/async/execution.hpp',
 		'include/async/mutex.hpp',
 		'include/async/oneshot-event.hpp',
