@@ -5,28 +5,13 @@
 #include <type_traits>
 
 #include <async/execution.hpp>
+#include <async/platform-support.hpp>
+#include <async/run-queue.hpp>
 #include <frg/list.hpp>
 #include <frg/optional.hpp>
 #include <frg/mutex.hpp>
 #include <frg/eternal.hpp>
 #include <frg/std_compat.hpp>
-
-#ifndef LIBASYNC_CUSTOM_PLATFORM
-#include <mutex>
-#include <iostream>
-#include <cassert>
-
-namespace async::platform {
-	using mutex = std::mutex;
-
-	[[noreturn]] inline void panic(const char *str) {
-		std::cerr << str << std::endl;
-		std::terminate();
-	}
-} // namespace async::platform
-#else
-#include <async/platform.hpp>
-#endif
 
 #if __has_include(<coroutine>) && !defined(LIBASYNC_FORCE_USE_EXPERIMENTAL)
 #include <coroutine>
@@ -289,67 +274,81 @@ private:
 	frg::aligned_storage<sizeof(void *), alignof(void *)> _object;
 };
 
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+
 // ----------------------------------------------------------------------------
-// run_queue implementation.
+// Queue-affine awaiting of senders.
 // ----------------------------------------------------------------------------
 
-struct run_queue;
+// Awaiter that resumes the coroutine on its run queue instead of resuming it inline from set_value().
+template<Sender S>
+struct queue_affine_awaiter : run_queue_item {
+	struct env {
+		run_queue *get_run_queue() {
+			return aw->rq_;
+		}
 
-run_queue *get_current_queue();
+		queue_affine_awaiter *aw;
+	};
 
-struct run_queue_item {
-	friend struct run_queue;
-	friend struct current_queue_token;
-	friend struct run_queue_token;
+	struct receiver {
+		template<typename... Args>
+		void set_value(Args &&... args) {
+			aw->value_.emplace(std::forward<Args>(args)...);
+			if(aw->rq_) {
+				aw->setup([] (run_queue_item *base) {
+					auto aw = static_cast<queue_affine_awaiter *>(base);
+					aw->h_.resume();
+				});
+				aw->rq_->post(aw);
+			}else{
+				// If the coroutine has no run queue, resume inline.
+				aw->h_.resume();
+			}
+		}
 
-	run_queue_item() = default;
+		auto get_env() {
+			return env{.aw = aw};
+		}
 
-	run_queue_item(const run_queue_item &) = delete;
+		queue_affine_awaiter *aw;
+	};
 
-	run_queue_item &operator= (const run_queue_item &) = delete;
+	queue_affine_awaiter(S s, run_queue *rq)
+	: op_{execution::connect(std::move(s), receiver{this})}, rq_{rq} { }
 
-	void arm(callback<void()> cb) {
-		assert(!_cb && "run_queue_item is already armed");
-		assert(cb && "cannot arm run_queue_item with a null callback");
-		_cb = cb;
+	bool await_ready() {
+		return false;
+	}
+
+	void await_suspend(corons::coroutine_handle<> h) {
+		h_ = h;
+		execution::start(op_);
+	}
+
+	typename S::value_type await_resume() {
+		assert(value_);
+		if constexpr (!std::is_same_v<typename S::value_type, void>)
+			return std::move(*value_);
 	}
 
 private:
-	callback<void()> _cb;
-	frg::default_list_hook<run_queue_item> _hook;
-};
+	struct empty { };
 
-struct run_queue_token {
-	run_queue_token(run_queue *rq)
-	: rq_{rq} { }
-
-	void run_iteration();
-	bool is_drained();
-
-private:
+	execution::operation_t<S, receiver> op_;
 	run_queue *rq_;
-};
+	corons::coroutine_handle<> h_;
 
-struct run_queue {
-	friend struct current_queue_token;
-	friend struct run_queue_token;
-
-	run_queue_token run_token() {
-		return {this};
-	}
-
-	void post(run_queue_item *node);
-
-private:
-	frg::intrusive_list<
-		run_queue_item,
-		frg::locate_member<
-			run_queue_item,
-			frg::default_list_hook<run_queue_item>,
-			&run_queue_item::_hook
+	std::optional<
+		std::conditional_t<
+			std::is_same_v<typename S::value_type, void>,
+			empty,
+			typename S::value_type
 		>
-	> _run_list;
+	> value_;
 };
+
+#endif // LIBASYNC_CUSTOM_PLATFORM
 
 // ----------------------------------------------------------------------------
 // Top-level execution functions.
@@ -374,6 +373,15 @@ requires std::same_as<typename Sender::value_type, void>
 void run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
+		run_queue *rq = nullptr;
+	};
+
+	struct env {
+		run_queue *get_run_queue() {
+			return stp_->rq;
+		}
+
+		state *stp_;
 	};
 
 	struct receiver {
@@ -384,11 +392,17 @@ void run(Sender s, IoService ios) {
 			stp_->done = true;
 		}
 
+		auto get_env() {
+			return env{stp_};
+		}
+
 	private:
 		state *stp_;
 	};
 
 	state st;
+	if constexpr (has_get_run_queue<IoService>)
+		st.rq = ios.get_run_queue();
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
 	execution::start(operation);
@@ -403,7 +417,16 @@ requires (!std::same_as<typename Sender::value_type, void>)
 typename Sender::value_type run(Sender s, IoService ios) {
 	struct state {
 		bool done = false;
+		run_queue *rq = nullptr;
 		frg::optional<typename Sender::value_type> value;
+	};
+
+	struct env {
+		run_queue *get_run_queue() {
+			return stp_->rq;
+		}
+
+		state *stp_;
 	};
 
 	struct receiver {
@@ -415,11 +438,17 @@ typename Sender::value_type run(Sender s, IoService ios) {
 			stp_->done = true;
 		}
 
+		auto get_env() {
+			return env{stp_};
+		}
+
 	private:
 		state *stp_;
 	};
 
 	state st;
+	if constexpr (has_get_run_queue<IoService>)
+		st.rq = ios.get_run_queue();
 
 	auto operation = execution::connect(std::move(s), receiver{&st});
 	execution::start(operation);
@@ -485,6 +514,23 @@ struct detached {
 		void unhandled_exception() {
 			platform::panic("libasync: Unhandled exception in coroutine");
 		}
+
+#ifndef LIBASYNC_CUSTOM_PLATFORM
+		template<typename S>
+		requires Sender<std::remove_cvref_t<S>>
+		auto await_transform(S &&s) {
+			return queue_affine_awaiter<std::remove_cvref_t<S>>{std::forward<S>(s), rq_};
+		}
+
+		template<typename A>
+		requires (!Sender<std::remove_cvref_t<A>>)
+		decltype(auto) await_transform(A &&a) {
+			return std::forward<A>(a);
+		}
+
+	private:
+		run_queue *rq_ = get_default_queue();
+#endif // LIBASYNC_CUSTOM_PLATFORM
 	};
 };
 
@@ -504,6 +550,18 @@ namespace detach_details_ {
 			finalize(cb_);
 		}
 
+		struct env {
+			run_queue *get_run_queue() {
+				return rq_;
+			}
+
+			run_queue *rq_;
+		};
+
+		auto get_env() {
+			return env{cb_->rq};
+		}
+
 	private:
 		control_block<Allocator, S, Cont> *cb_;
 	};
@@ -519,23 +577,30 @@ namespace detach_details_ {
 			continuation();
 		}
 
-		control_block(Allocator allocator, S sender, Cont continuation)
-		: allocator{std::move(allocator)},
+		control_block(Allocator allocator, run_queue *rq, S sender, Cont continuation)
+		: allocator{std::move(allocator)}, rq{rq},
 				operation{execution::connect(
 						std::move(sender), final_receiver<Allocator, S, Cont>{this})},
 				continuation{std::move(continuation)} { }
 
 		Allocator allocator;
+		run_queue *rq;
 		execution::operation_t<S, final_receiver<Allocator, S, Cont>> operation;
 		Cont continuation;
 	};
 }
 
 template<typename Allocator, typename S, typename Cont>
-void detach_with_allocator(Allocator allocator, S sender, Cont continuation) {
+void detach_with_allocator_on(run_queue *rq, Allocator allocator, S sender, Cont continuation) {
 	auto p = frg::construct<detach_details_::control_block<Allocator, S, Cont>>(allocator,
-			allocator, std::move(sender), std::move(continuation));
+			allocator, rq, std::move(sender), std::move(continuation));
 	execution::start_inline(p->operation);
+}
+
+template<typename Allocator, typename S, typename Cont>
+void detach_with_allocator(Allocator allocator, S sender, Cont continuation) {
+	detach_with_allocator_on<Allocator, S, Cont>(get_default_queue(), std::move(allocator),
+			std::move(sender), std::move(continuation));
 }
 
 template<typename Allocator, typename S>
@@ -551,6 +616,17 @@ void detach(S sender) {
 template<Sender S, typename Cont>
 void detach(S sender, Cont continuation) {
 	return detach_with_allocator(frg::stl_allocator{}, std::move(sender), std::move(continuation));
+}
+
+template<Sender S>
+void detach_on(run_queue *rq, S sender) {
+	return detach_with_allocator_on(rq, frg::stl_allocator{}, std::move(sender), [] { });
+}
+
+template<Sender S, typename Cont>
+void detach_on(run_queue *rq, S sender, Cont continuation) {
+	return detach_with_allocator_on(rq, frg::stl_allocator{}, std::move(sender),
+			std::move(continuation));
 }
 
 namespace spawn_details_ {
@@ -571,6 +647,18 @@ namespace spawn_details_ {
 			finalize(cb_);
 		}
 
+		struct env {
+			run_queue *get_run_queue() {
+				return rq_;
+			}
+
+			run_queue *rq_;
+		};
+
+		auto get_env() {
+			return env{cb_->rq};
+		}
+
 	private:
 		control_block<Allocator, S, R> *cb_;
 	};
@@ -584,23 +672,36 @@ namespace spawn_details_ {
 			frg::destruct(allocator, cb);
 		}
 
-		control_block(Allocator allocator, S sender, R dr)
-		: allocator{std::move(allocator)},
+		control_block(Allocator allocator, run_queue *rq, S sender, R dr)
+		: allocator{std::move(allocator)}, rq{rq},
 				operation{execution::connect(
 						std::move(sender), final_receiver<Allocator, S, R>{this})},
 				dr{std::move(dr)} { }
 
 		Allocator allocator;
+		run_queue *rq;
 		execution::operation_t<S, final_receiver<Allocator, S, R>> operation;
 		R dr; // Downstream receiver.
 	};
 }
 
 template<typename Allocator, typename S, typename R>
-void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
+void spawn_with_allocator_on(run_queue *rq, Allocator allocator, S sender, R receiver) {
 	auto p = frg::construct<spawn_details_::control_block<Allocator, S, R>>(allocator,
-			allocator, std::move(sender), std::move(receiver));
+			allocator, rq, std::move(sender), std::move(receiver));
 	execution::start_inline(p->operation);
+}
+
+template<typename Allocator, typename S, typename R>
+void spawn_with_allocator(Allocator allocator, S sender, R receiver) {
+	spawn_with_allocator_on<Allocator, S, R>(get_default_queue(), std::move(allocator),
+			std::move(sender), std::move(receiver));
+}
+
+template<Sender S, typename R>
+void spawn_on(run_queue *rq, S sender, R receiver) {
+	return spawn_with_allocator_on(rq, frg::stl_allocator{}, std::move(sender),
+			std::move(receiver));
 }
 
 } // namespace async
