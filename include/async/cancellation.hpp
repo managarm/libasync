@@ -293,22 +293,43 @@ private:
 		if (!(st & done_listen) || !(st & done_completion_path))
 			return;
 
-		if (!(st & done_cancellation_path)) {
-			// Try to unregister from the cancellation event once both listen() and complete() were called.
-			// Note that we enter this code path at most once since done_cancellation_path is the only missing
-			// bit in state_ and the next call to transition_() will necessarily set it.
-			assert(event_);
+		if (!(old_st & done_listen) || !(old_st & done_completion_path)) {
+			// If at least one of done_listen or done_completion_path was unset before,
+			// we perform the unregistration step. This happens exactly once.
+			unsigned int bits = done_unregister;
+			if (!(st & done_cancellation_path)) {
+				// Try to unregister from the cancellation event.
+				assert(event_);
 
-			frg::unique_lock guard{event_->_mutex};
-			if (event_->_was_requested)
-				return;
-			auto it = event_->_cbs.iterator_to(this);
-			event_->_cbs.erase(it);
+				frg::unique_lock guard{event_->_mutex};
+				if (!event_->_was_requested) {
+					auto it = event_->_cbs.iterator_to(this);
+					event_->_cbs.erase(it);
+					// call() can never run anymore.
+					bits |= done_cancellation_path;
+				}
+			}
+			// Set done_unregister (and potentially done_cancellation_path) last
+			// as accessing *this may be UB afterwards (see below).
+			st = state_.fetch_or(bits, std::memory_order_acq_rel) | bits;
+		} else {
+			// Both done_listen and done_completion_path were already set before.
+			assert(new_bits == done_cancellation_path);
 		}
 
-		// Call resume() when all code paths are done. This can only happen once.
+		// Call resume() once all code paths are done and unregistration is finished (i.e., all four bits are set).
+		// If the cancellation path and unregistering race, both of them perform an RMW on state_
+		// and exactly one of them observes the other's bit. resume() is hence called exactly once.
+		// If we are not the code path that calls resume_() here,
+		// accessing *this is UB as resume_() may concurrently destroy *this.
+		if (!(st & done_cancellation_path) || !(st & done_unregister))
+			return;
 		resume_(this);
 	}
+
+	// Note: resume() is called once all four of the bits below are set.
+	//       Hence, *this also only remains valid until this happens.
+	//       All code paths that access *this must guarantee that at least one bit is still unset.
 
 	// Set in state_ when listen() is done.
 	static constexpr unsigned int done_listen = 1u << 0;
@@ -316,6 +337,8 @@ private:
 	static constexpr unsigned int done_completion_path = 1u << 1;
 	// Set in state_ when tryCancel() is done or when we know that it will never be called.
 	static constexpr unsigned int done_cancellation_path = 1u << 2;
+	// Set in state_ when unregistration from the cancellation event is done or when we know that it is unnecessary.
+	static constexpr unsigned int done_unregister = 1u << 3;
 
 	cancellation_event *event_{nullptr};
 	std::atomic<unsigned int> state_{0};
