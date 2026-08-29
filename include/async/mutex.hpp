@@ -217,6 +217,15 @@ namespace detail {
 			bool exclusive;
 		};
 
+		using node_list = frg::intrusive_list<
+			node,
+			frg::locate_member<
+				node,
+				frg::default_list_hook<node>,
+				&node::hook
+			>
+		>;
+
 	public:
 		shared_mutex() = default;
 
@@ -464,14 +473,7 @@ namespace detail {
 			// Only the owner ever transitions out of state::locked so we must be in state::contended.
 			assert(st.c == contention::contended);
 
-			frg::intrusive_list<
-				node,
-				frg::locate_member<
-					node,
-					frg::default_list_hook<node>,
-					&node::hook
-				>
-			> pending;
+			node_list pending;
 			{
 				frg::unique_lock lock(mutex_);
 
@@ -593,6 +595,63 @@ namespace detail {
 			next->complete();
 		}
 
+		// Atomically converts an exclusive lock into a shared one.
+		void downgrade() {
+			auto st = st_.load(std::memory_order_relaxed);
+			assert(st.c != contention::none);
+			assert(!st.shared_cnt);
+
+			// If there is no contention, we can downgrade without taking mutex_.
+			if (st.c == contention::locked) {
+				bool success = st_.compare_exchange_strong(
+					st,
+					state{.c = contention::locked, .shared_cnt = 1},
+					std::memory_order_release,
+					std::memory_order_relaxed
+				);
+				if (success)
+					return;
+				assert(!st.shared_cnt);
+			}
+			// Only the owner ever transitions out of state::locked so we must be in state::contended.
+			assert(st.c == contention::contended);
+
+			// Shared waiters can share the lock with us, hence we need to wake them.
+			// This also maintains the invariant that the first waiter is exclusive
+			// whenever the shared count is non-zero.
+			node_list pending;
+			{
+				frg::unique_lock lock(mutex_);
+
+				// Otherwise, we would not be in state::contended.
+				assert(!waiters_.empty());
+
+				// We keep holding the lock in shared mode.
+				unsigned int n = 1;
+				while (!waiters_.empty() && !waiters_.front()->exclusive) {
+					pending.push_back(waiters_.pop_front());
+					++n;
+				}
+				if (waiters_.empty()) {
+					// Release since state::locked with a non-zero shared count can be joined
+					// by try_lock_shared() without taking mutex_.
+					st_.store(
+						state{.c = contention::locked, .shared_cnt = n},
+						std::memory_order_release
+					);
+				} else {
+					// Hand-off to a waiter does not require a fence.
+					st_.store(
+						state{.c = contention::contended, .shared_cnt = n},
+						std::memory_order_relaxed
+					);
+				}
+			}
+
+			while (!pending.empty())
+				pending.pop_front()->complete();
+		}
+
 	private:
 		platform::mutex mutex_;
 
@@ -603,14 +662,7 @@ namespace detail {
 		// which can happen outside of mutex_.
 		std::atomic<state> st_{state{.c = contention::none, .shared_cnt = 0}};
 
-		frg::intrusive_list<
-			node,
-			frg::locate_member<
-				node,
-				frg::default_list_hook<node>,
-				&node::hook
-			>
-		> waiters_;
+		node_list waiters_;
 	};
 }
 
