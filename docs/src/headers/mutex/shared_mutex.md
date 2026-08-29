@@ -19,13 +19,18 @@ struct shared_mutex {
 	void unlock(); // (3)
 
 	void unlock_shared(); // (4)
+
+	void downgrade(); // (5)
 };
 ```
 
 1. Asynchronously acquire the mutex in exclusive mode.
-1. Asynchronously acquire the mutex in shared mode.
+2. Asynchronously acquire the mutex in shared mode.
 3. Release the mutex (mutex must be in exclusive mode).
-3. Release the mutex (mutex must be in shared mode).
+4. Release the mutex (mutex must be in shared mode).
+5. Convert an exclusive lock into a shared one (mutex must be in exclusive mode).
+Ownership of the mutex is never given up, hence no other exclusive owner can acquire the mutex in between.
+Since the lock is shared after this call, it must be released by `unlock_shared()`.
 
 ### Return values
 1. This method returns a sender of unspecified type. The sender does not return
@@ -33,6 +38,7 @@ any value, and completes once the mutex is acquired.
 2. Same as (1).
 3. This method doesn't return any value.
 4. Same as (3).
+5. Same as (3).
 
 ## Examples
 
