@@ -217,6 +217,15 @@ namespace detail {
 			bool exclusive;
 		};
 
+		using node_list = frg::intrusive_list<
+			node,
+			frg::locate_member<
+				node,
+				frg::default_list_hook<node>,
+				&node::hook
+			>
+		>;
+
 	public:
 		shared_mutex() = default;
 
@@ -464,14 +473,7 @@ namespace detail {
 			// Only the owner ever transitions out of state::locked so we must be in state::contended.
 			assert(st.c == contention::contended);
 
-			frg::intrusive_list<
-				node,
-				frg::locate_member<
-					node,
-					frg::default_list_hook<node>,
-					&node::hook
-				>
-			> pending;
+			node_list pending;
 			{
 				frg::unique_lock lock(mutex_);
 
@@ -603,14 +605,7 @@ namespace detail {
 		// which can happen outside of mutex_.
 		std::atomic<state> st_{state{.c = contention::none, .shared_cnt = 0}};
 
-		frg::intrusive_list<
-			node,
-			frg::locate_member<
-				node,
-				frg::default_list_hook<node>,
-				&node::hook
-			>
-		> waiters_;
+		node_list waiters_;
 	};
 }
 
