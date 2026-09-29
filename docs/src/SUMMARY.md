@@ -48,6 +48,7 @@
   - [async/promise.hpp](headers/promise.md)
     - [promise](headers/promise/promise.md)
     - [future](headers/promise/future.md)
+  - [async/scope.hpp](headers/scope.md)
   - [async/post.hpp](headers/post-ack.md)
     - [post\_ack\_mechanism](headers/post-ack/post_ack_mechanism.md)
     - [post\_ack\_agent](headers/post-ack/post_ack_agent.md)

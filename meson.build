@@ -25,6 +25,7 @@ if get_option('install_headers')
 		'include/async/recurring-event.hpp',
 		'include/async/result.hpp',
 		'include/async/run-queue.hpp',
+		'include/async/scope.hpp',
 		'include/async/sequenced-event.hpp',
 		'include/async/wait-group.hpp',
 		'include/async/generator.hpp',

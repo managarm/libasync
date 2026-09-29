@@ -26,6 +26,7 @@ sources = files(
 	'with_cancel_cb.cpp',
 	'generator.cpp',
 	'run-queue.cpp',
+	'scope.cpp',
 )
 
 exe = executable('gtests',
