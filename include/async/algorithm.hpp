@@ -453,26 +453,28 @@ struct let_operation {
 	using value_type = typename sender_type::value_type;
 
 	let_operation(Pred pred, Func func, Receiver r)
-	: pred_{std::move(pred)}, func_{std::move(func)}, imm_{}, r_{std::move(r)} { }
+	: pred_{std::move(pred)}, func_{std::move(func)}, r_{std::move(r)} { }
 
 	let_operation(const let_operation &) = delete;
 	let_operation &operator=(const let_operation &) = delete;
 
 	~let_operation() {
 		op_.destruct();
+		imm_.destruct();
 	}
 
 public:
 	void start() {
-		imm_ = std::move(pred_());
-		op_.construct_with([&]{ return execution::connect(func_(imm_), std::move(r_)); });
+		// Constructed in place so that imm_type need not be movable.
+		imm_.construct_with([&]{ return pred_(); });
+		op_.construct_with([&]{ return execution::connect(func_(*imm_), std::move(r_)); });
 		return execution::start(*op_);
 	}
 
 private:
 	Pred pred_;
 	Func func_;
-	imm_type imm_;
+	frg::manual_box<imm_type> imm_;
 	Receiver r_;
 	frg::manual_box<execution::operation_t<sender_type, Receiver>> op_;
 };
