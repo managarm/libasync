@@ -459,8 +459,10 @@ struct let_operation {
 	let_operation &operator=(const let_operation &) = delete;
 
 	~let_operation() {
-		op_.destruct();
-		imm_.destruct();
+		if(op_.valid())
+			op_.destruct();
+		if(imm_.valid())
+			imm_.destruct();
 	}
 
 public:

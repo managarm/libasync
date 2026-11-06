@@ -11,6 +11,7 @@ namespace async::detail {
 
 struct abstract_cancellation_callback {
 	friend struct cancellation_event;
+	friend struct deferred_cancellation;
 
 protected:
 	virtual ~abstract_cancellation_callback() = default;
@@ -19,6 +20,59 @@ private:
 	virtual void call() = 0;
 
 	frg::default_list_hook<abstract_cancellation_callback> _hook;
+};
+
+// Callbacks of cancellation events that were cancelled by cancel_deferred() but not invoked yet.
+// This allows cancelling events while holding locks: invoking callbacks can run arbitrary code,
+// e.g., completed operations may resume coroutines inline.
+// Invariants:
+// * A cancellation_event must not be destructed while any of its callbacks are still pending:
+//   callbacks may access their event (e.g., observers call try_reset() from their handlers).
+//   Events whose callbacks were all invoked may be destructed while invoke() is still running.
+// * As with a concurrent cancel(), cancellation_callbacks must not be destructed before
+//   invoke() ran. Observers and resolvers are safe: once cancellation was requested, they do
+//   not let their operation complete before their callback ran (cf. try_reset() returning false).
+// * invoke() must run before the deferred_cancellation is destructed.
+// * deferred_cancellation itself is not thread-safe: cancelling multiple events into the same
+//   deferred_cancellation from different threads requires external synchronization.
+struct deferred_cancellation {
+	friend struct cancellation_event;
+
+	deferred_cancellation() = default;
+
+	deferred_cancellation(const deferred_cancellation &) = delete;
+
+	deferred_cancellation(deferred_cancellation &&other) {
+		_cbs.splice(_cbs.end(), other._cbs);
+	}
+
+	~deferred_cancellation() {
+		assert(_cbs.empty() && "invoke() must run before"
+				" deferred_cancellation is destructed");
+	}
+
+	deferred_cancellation &operator= (const deferred_cancellation &) = delete;
+	deferred_cancellation &operator= (deferred_cancellation &&) = delete;
+
+	void invoke() {
+		while (!_cbs.empty()) {
+			auto cb = _cbs.front();
+			_cbs.pop_front();
+			cb->call();
+		}
+	}
+
+private:
+	using callback_list = frg::intrusive_list<
+		abstract_cancellation_callback,
+		frg::locate_member<
+			abstract_cancellation_callback,
+			frg::default_list_hook<abstract_cancellation_callback>,
+			&abstract_cancellation_callback::_hook
+		>
+	>;
+
+	callback_list _cbs;
 };
 
 struct cancellation_event {
@@ -49,6 +103,13 @@ struct cancellation_event {
 
 	void cancel();
 
+	// Like cancel(), but the callbacks only run on deferred.invoke().
+	[[nodiscard]] deferred_cancellation cancel_deferred();
+	void cancel_deferred(deferred_cancellation &deferred);
+
+	// Must only be called if external synchronization guarantees that nobody uses the event
+	// anymore, i.e., no callbacks are attached (or pending in a deferred_cancellation)
+	// and no cancellation is concurrently requested.
 	void reset();
 
 private:
@@ -56,14 +117,7 @@ private:
 
 	bool _was_requested;
 
-	frg::intrusive_list<
-		abstract_cancellation_callback,
-		frg::locate_member<
-			abstract_cancellation_callback,
-			frg::default_list_hook<abstract_cancellation_callback>,
-			&abstract_cancellation_callback::_hook
-		>
-	> _cbs;
+	deferred_cancellation::callback_list _cbs;
 };
 
 struct cancellation_token {
@@ -347,26 +401,19 @@ private:
 };
 
 inline void cancellation_event::cancel() {
-	frg::intrusive_list<
-		abstract_cancellation_callback,
-		frg::locate_member<
-			abstract_cancellation_callback,
-			frg::default_list_hook<abstract_cancellation_callback>,
-			&abstract_cancellation_callback::_hook
-		>
-	> pending;
+	cancel_deferred().invoke();
+}
 
-	{
-		frg::unique_lock guard{_mutex};
-		_was_requested = true;
-		pending.splice(pending.begin(), _cbs);
-	}
+inline deferred_cancellation cancellation_event::cancel_deferred() {
+	deferred_cancellation deferred;
+	cancel_deferred(deferred);
+	return deferred;
+}
 
-	while (!pending.empty()) {
-		auto cb = pending.front();
-		pending.pop_front();
-		cb->call();
-	}
+inline void cancellation_event::cancel_deferred(deferred_cancellation &deferred) {
+	frg::unique_lock guard{_mutex};
+	_was_requested = true;
+	deferred._cbs.splice(deferred._cbs.end(), _cbs);
 }
 
 inline void cancellation_event::reset() {
@@ -379,6 +426,7 @@ inline void cancellation_event::reset() {
 namespace async {
 
 using detail::cancellation_event;
+using detail::deferred_cancellation;
 using detail::cancellation_token;
 using detail::cancellation_callback;
 using detail::cancellation_observer;

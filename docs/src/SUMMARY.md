@@ -37,6 +37,7 @@
   - [async/sequenced.hpp](headers/sequenced-event.md)
   - [async/cancellation.hpp](headers/cancellation.md)
     - [cancellation\_event](headers/cancellation/cancellation_event.md)
+    - [deferred\_cancellation](headers/cancellation/deferred_cancellation.md)
     - [cancellation\_callback](headers/cancellation/cancellation_callback.md)
     - [suspend\_indefinitely](headers/cancellation/suspend_indefinitely.md)
   - [async/execution.hpp](headers/execution.md)

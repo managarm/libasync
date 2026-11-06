@@ -15,6 +15,24 @@ TEST(Algorithm, Let) {
 	ASSERT_EQ(v, 42);
 }
 
+TEST(Algorithm, LetNotStarted) {
+	struct receiver {
+		void set_value(int) { }
+	};
+
+	bool pred_called = false;
+	auto op = async::execution::connect(
+		async::let(
+			[&]() -> int { pred_called = true; return 21; },
+			[](int &ref) -> async::result<int> {
+				co_return ref * 2;
+			}
+		),
+		receiver{}
+	);
+	ASSERT_FALSE(pred_called);
+}
+
 TEST(Algorithm, Sequence) {
 	int steps[4] = {0, 0, 0, 0};
 	int v = async::run([&]() -> async::result<int> {
