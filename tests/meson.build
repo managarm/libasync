@@ -24,6 +24,7 @@ sources = files(
 	'sequenced.cpp',
 	'post-ack.cpp',
 	'with_cancel_cb.cpp',
+	'deferred-cancellation.cpp',
 	'generator.cpp',
 	'run-queue.cpp',
 	'scope.cpp',
