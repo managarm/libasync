@@ -415,8 +415,10 @@ public:
 
 private:
 	Receiver r_;
-	operation_tuple ops_;
+	// Constructed before and destructed after ops_: the operations get tokens for these events
+	// when they are connected, and can hold callbacks on them until they are destructed.
 	cancellation_event cs_[sizeof...(Is)];
+	operation_tuple ops_;
 	// Counts participants (see n_participants), not branches.
 	std::atomic<unsigned int> n_done_;
 };
