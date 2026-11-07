@@ -355,19 +355,25 @@ struct race_and_cancel_operation<Receiver, frg::tuple<Functors...>, std::index_s
 private:
 	using functor_tuple = frg::tuple<Functors...>;
 
+	// The branches, plus the canceller: the first branch to complete counts twice, once as a
+	// branch and once more after cancelling the other branches. This prevents the other branches
+	// from completing the receiver (which may destruct this operation) while cs_ is still in use.
+	static constexpr unsigned int n_participants = sizeof...(Is) + 1;
+
 	template<size_t I>
 	struct internal_receiver {
 		internal_receiver(race_and_cancel_operation *self)
 		: self_{self} { }
 
 		void set_value() {
-			auto n = self_->n_done_.fetch_add(1, std::memory_order_acq_rel);
-			if(!n) {
+			auto done = self_->n_done_.fetch_add(1, std::memory_order_acq_rel) + 1;
+			if(done == 1) {
 				for(unsigned int j = 0; j < sizeof...(Is); ++j)
 					if(j != I)
 						self_->cs_[j].cancel();
+				done = self_->n_done_.fetch_add(1, std::memory_order_acq_rel) + 1;
 			}
-			if(n + 1 == sizeof...(Is))
+			if(done == n_participants)
 				execution::set_value(self_->r_);
 		}
 
@@ -401,32 +407,19 @@ private:
 
 public:
 	race_and_cancel_operation(race_and_cancel_sender<Functors...> s, Receiver r)
-	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_sync_{0}, n_done_{0} { }
+	: r_{std::move(r)}, ops_{make_operations_tuple(std::move(s))}, n_done_{0} { }
 
 	void start() {
-		unsigned int n_sync = 0;
-
-		((execution::start_inline(ops_.template get<Is>())
-			? n_sync++ : 0), ...);
-
-		if (n_sync) {
-			auto n = n_done_.fetch_add(n_sync, std::memory_order_acq_rel);
-
-			if (!n) {
-				for(unsigned int j = 0; j < sizeof...(Is); ++j)
-					cs_[j].cancel();
-			}
-
-			if ((n + n_sync) == sizeof...(Is))
-				return execution::set_value(r_);
-		}
+		(execution::start(ops_.template get<Is>()), ...);
 	}
 
 private:
 	Receiver r_;
-	operation_tuple ops_;
+	// Constructed before and destructed after ops_: the operations get tokens for these events
+	// when they are connected, and can hold callbacks on them until they are destructed.
 	cancellation_event cs_[sizeof...(Is)];
-	std::atomic<unsigned int> n_sync_;
+	operation_tuple ops_;
+	// Counts participants (see n_participants), not branches.
 	std::atomic<unsigned int> n_done_;
 };
 
